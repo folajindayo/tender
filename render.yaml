@@ -1,0 +1,92 @@
+# Render blueprint for Tender.
+#
+# Secrets are never in this file. Everything sensitive is declared with
+# `sync: false`, which tells Render to expect a value entered in the dashboard
+# and to leave it out of the repository entirely.
+#
+# The PWA stays on Vercel, which already serves it over HTTPS -- the camera
+# needs a secure context, so that part is not optional. Only the API and its
+# database move here.
+
+databases:
+  - name: tender-db
+    databaseName: tender
+    user: tender
+    plan: free
+    region: frankfurt          # closest Render region to Lagos
+
+services:
+  - type: web
+    name: tender-api
+    runtime: docker
+    repo: https://github.com/folajindayo/tender
+    branch: main
+    region: frankfurt
+    plan: free
+    dockerfilePath: ./apps/api/Dockerfile
+    dockerContext: .           # repo root: the image carries the migrations
+    healthCheckPath: /health
+
+    envVars:
+      # ---- wired automatically ----
+      - key: DATABASE_URL
+        fromDatabase:
+          name: tender-db
+          property: connectionString
+
+      # ---- secrets: set these in the Render dashboard ----
+      # Note recognition. The service refuses to start without it rather than
+      # accept every pledge unscreened.
+      - key: ANTHROPIC_API_KEY
+        sync: false
+
+      # The bank rail. Without a key, name enquiry and payouts are unavailable
+      # and the API says so rather than pretending a transfer went out.
+      - key: FINTAVA_API_KEY
+        sync: false
+      # The Fintava customer whose wallet is debited: Tender's float.
+      - key: FINTAVA_SOURCE_ID
+        sync: false
+      # Verifies inbound webhooks. Events are rejected without it.
+      - key: FINTAVA_WEBHOOK_SECRET
+        sync: false
+
+      # The origin the PWA is served from, for CORS.
+      - key: CORS_ORIGIN
+        sync: false
+
+      # ---- non-secret configuration ----
+      - key: PORT
+        value: "8080"
+      - key: VISION_MODE
+        value: claude
+      - key: VISION_MODEL
+        value: claude-haiku-4-5
+      - key: FINTAVA_BASE_URL
+        value: https://dev.fintavapay.com/api/dev
+      - key: FEE_BPS
+        value: "50"
+      - key: MATCH_TTL
+        value: 30m
+      - key: TRANSFER_TTL
+        value: 2h
+      - key: CREDIT_TTL
+        value: 1h
+      - key: SWEEP_INTERVAL
+        value: 15s
+      - key: PAYOUT_INTERVAL
+        value: 30s
+      - key: PAYOUT_STALE_AFTER
+        value: 2m
+      - key: SETTLEMENTS_FOR_CREDIT
+        value: "3"
+      - key: CREDIT_LIMIT_KOBO
+        value: "500000"
+      - key: MAX_HANDOVER_KOBO
+        value: "10000000"
+      # Handovers only match during a venue's opening hours. Set to false only
+      # to rehearse outside business hours.
+      - key: ENFORCE_VENUE_HOURS
+        value: "true"
+      - key: MIGRATE_ON_START
+        value: "true"

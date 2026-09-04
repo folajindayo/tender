@@ -1,0 +1,18 @@
+node_modules/
+.next/
+out/
+dist/
+.turbo/
+.env
+.env.local
+*.log
+.DS_Store
+apps/api/bin/
+
+# Photographs of real cash used for the counting eval stay out of the repo.
+apps/api/testdata/naira/*
+!apps/api/testdata/naira/README.md
+!apps/api/testdata/naira/manifest.json
+
+# Deploy-time secrets. Never committed.
+.env.deploy

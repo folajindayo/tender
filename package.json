@@ -1,0 +1,22 @@
+{
+  "name": "tender",
+  "private": true,
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "db:up": "docker compose up -d db",
+    "db:down": "docker compose down",
+    "db:migrate": "./scripts/migrate.sh",
+    "api:dev": "cd apps/api && go run ./cmd/api",
+    "api:test": "cd apps/api && go test ./...",
+    "bootstrap": "cd apps/api && go run ./cmd/bootstrap",
+    "test": "cd apps/api && go test ./...",
+    "e2e": "./scripts/e2e.sh"
+  },
+  "devDependencies": {
+    "turbo": "^2.5.5"
+  },
+  "packageManager": "pnpm@11.22.0"
+}
