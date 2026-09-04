@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -48,13 +49,26 @@ func (a *API) Router() http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID, middleware.RealIP, middleware.Recoverer)
 	r.Use(cors.Handler(cors.Options{
-		AllowedOrigins: []string{a.Cfg.CORSOrigin, "http://localhost:3000"},
-		AllowedMethods: []string{"GET", "POST", "OPTIONS"},
-		// The session cookie is cross-origin: the PWA and the API are on
-		// different hosts, so the browser only sends it when credentials are
-		// explicitly allowed on both ends.
+		AllowOriginFunc: func(r *http.Request, origin string) bool {
+			if origin == "" || origin == "null" {
+				return true
+			}
+			if a.Cfg.CORSOrigin != "" && (origin == a.Cfg.CORSOrigin || strings.TrimRight(origin, "/") == strings.TrimRight(a.Cfg.CORSOrigin, "/")) {
+				return true
+			}
+			// Allow all Vercel deployments and localhost ports
+			if strings.HasSuffix(origin, ".vercel.app") ||
+				origin == "https://tender-pwa.vercel.app" ||
+				strings.HasPrefix(origin, "http://localhost:") ||
+				strings.HasPrefix(origin, "http://127.0.0.1:") {
+				return true
+			}
+			return false
+		},
+		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
 		AllowCredentials: true,
-		AllowedHeaders:   []string{"Accept", "Content-Type", "X-Tender-User"},
+		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-Tender-User", "X-Requested-With", "Origin"},
+		ExposedHeaders:   []string{"Link", "Set-Cookie"},
 		MaxAge:           300,
 	}))
 

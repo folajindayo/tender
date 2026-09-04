@@ -64,7 +64,7 @@ func Load() (Config, error) {
 	c := Config{
 		DatabaseURL:          env("DATABASE_URL", "postgres://tender:tender@localhost:5432/tender?sslmode=disable"),
 		Port:                 env("PORT", "8080"),
-		CORSOrigin:           env("CORS_ORIGIN", "http://localhost:3000"),
+		CORSOrigin:           env("CORS_ORIGIN", "https://tender-pwa.vercel.app"),
 		VisionMode:           env("VISION_MODE", "claude"),
 		VisionModel:          env("VISION_MODEL", vision.DefaultModel),
 		AnthropicAPIKey:      env("ANTHROPIC_API_KEY", ""),

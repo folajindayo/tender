@@ -50,7 +50,7 @@ services:
 
       # The origin the PWA is served from, for CORS.
       - key: CORS_ORIGIN
-        sync: false
+        value: "https://tender-pwa.vercel.app"
 
       # ---- non-secret configuration ----
       - key: PORT
