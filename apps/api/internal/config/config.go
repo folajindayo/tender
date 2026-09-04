@@ -99,16 +99,6 @@ func Load() (Config, error) {
 		return c, fmt.Errorf("VISION_MODE must be \"claude\" or \"stub\", got %q", c.VisionMode)
 	}
 
-	// A key without a source wallet can resolve names but cannot pay anyone.
-	// That is a legitimate configuration -- it is how the app runs before the
-	// float wallet exists -- but it must be obvious rather than discovered when
-	// the first settlement fails to deliver.
-	if c.FintavaAPIKey != "" && c.FintavaSourceID == "" {
-		fmt.Fprintln(os.Stderr,
-			"fintava: FINTAVA_API_KEY is set but FINTAVA_SOURCE_ID is not; "+
-				"name enquiry will work and bank payouts will not")
-	}
-
 	if c.FeeBPS < 0 || c.FeeBPS > 10000 {
 		return c, fmt.Errorf("FEE_BPS must be between 0 and 10000, got %d", c.FeeBPS)
 	}

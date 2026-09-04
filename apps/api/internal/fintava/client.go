@@ -84,10 +84,11 @@ func New(cfg Config) *Client {
 // way to complete.
 func (c *Client) Configured() bool { return c != nil && c.cfg.APIKey != "" }
 
-// CanPayOut additionally requires the wallet that gets debited.
-func (c *Client) CanPayOut() bool { return c.Configured() && c.cfg.SourceID != "" }
+// CanPayOut reports whether payouts can be initiated. Payouts debit the float
+// (via the merchant wallet or a resolved source wallet).
+func (c *Client) CanPayOut() bool { return c.Configured() }
 
-// SourceID is the Fintava customer whose wallet funds payouts: Tender's float.
+// SourceID is the Fintava customer whose wallet funds payouts (optional).
 func (c *Client) SourceID() string { return c.cfg.SourceID }
 
 // ---------------------------------------------------------------- envelope
@@ -272,7 +273,12 @@ func (c *Client) BankCredit(ctx context.Context, req BankCreditRequest) (Payout,
 	if !c.CanPayOut() {
 		return Payout{}, ErrNotConfigured
 	}
-	data, err := c.do(ctx, http.MethodPost, "/bank/credit", req)
+	path := "/bank/credit"
+	if req.SourceID == "" {
+		// When no customer sourceId is specified, payout directly from the merchant float wallet
+		path = "/bank/credit/merchant"
+	}
+	data, err := c.do(ctx, http.MethodPost, path, req)
 	if err != nil {
 		var apiErr *APIError
 		if errors.As(err, &apiErr) {

@@ -44,9 +44,6 @@ services:
       # and the API says so rather than pretending a transfer went out.
       - key: FINTAVA_API_KEY
         sync: false
-      # The Fintava customer whose wallet is debited: Tender's float.
-      - key: FINTAVA_SOURCE_ID
-        sync: false
       # Verifies inbound webhooks. Events are rejected without it.
       - key: FINTAVA_WEBHOOK_SECRET
         sync: false
