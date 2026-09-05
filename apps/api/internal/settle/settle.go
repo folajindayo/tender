@@ -258,7 +258,36 @@ func (s *Service) Pledge(ctx context.Context, req PledgeRequest) (*PledgeResult,
 }
 
 // screen applies the checks that should stop a pledge before anyone travels.
+// screen decides whether a pledge may proceed.
+//
+// Order matters, and it is not the obvious one. The fraud verdicts come after
+// the "could we read this at all" checks, because a recognizer that saw no
+// notes has no standing to say what it was looking at. Ranking the accusations
+// first meant an unreadable photograph -- bad light, a flash on a shiny table,
+// a phone held too close -- came back as "that looks like a photograph of a
+// screen", telling somebody holding real cash that they were committing fraud.
+//
+// The gate is evidence, not suspicion: a genuine screen replay shows countable
+// notes, because that is the whole point of it. No notes and no confidence
+// means the photograph failed, and that is what the sender should be told.
+//
+// This costs nothing in fraud terms. Vision is a pre-filter and a UX device,
+// never the security boundary -- the counterparty who physically receives the
+// notes is what makes a forgery worthless, and they still check.
 func screen(v *vision.Result, declared money.Kobo) *Rejection {
+	// Did we read anything at all?
+	switch {
+	case len(v.Notes) == 0:
+		return reject("no_notes",
+			"No naira notes could be made out. Lay them flat on a dull surface, "+
+				"spread apart, with the whole layout in frame.")
+	case v.Confidence < 0.5:
+		return reject("low_confidence",
+			"The photograph is too unclear to count reliably. Try again in better light.")
+	}
+
+	// Only now, with something actually recognised, is a verdict on what it is
+	// worth anything.
 	switch {
 	case v.ScreenReplay:
 		return reject("screen_replay",
@@ -266,16 +295,10 @@ func screen(v *vision.Result, declared money.Kobo) *Rejection {
 	case v.PhotocopySuspected:
 		return reject("photocopy",
 			"These notes do not look genuine. A counterparty would refuse them at handover.")
-	case len(v.Notes) == 0:
-		return reject("no_notes",
-			"No naira notes were visible. Lay the notes flat, spread them out, and try again.")
 	case v.Total != declared:
 		return reject("amount_mismatch",
 			"You said %s but %s is visible. Recount and photograph the notes again.",
 			declared, v.Total)
-	case v.Confidence < 0.5:
-		return reject("low_confidence",
-			"The photograph is too unclear to count reliably. Try again in better light.")
 	}
 	return nil
 }

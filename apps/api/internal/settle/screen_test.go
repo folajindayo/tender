@@ -8,78 +8,85 @@ import (
 	"tender/api/internal/vision"
 )
 
-func notes(n int, denom money.Kobo) []domain.Note {
-	out := make([]domain.Note, n)
-	for i := range out {
-		out[i] = domain.Note{Denomination: denom}
+func twoFiveHundreds() []domain.Note {
+	return []domain.Note{
+		{Denomination: 50000}, {Denomination: 50000},
 	}
-	return out
 }
 
-func TestScreen(t *testing.T) {
-	twentyK := money.FromNaira(20000)
-	good := func() *vision.Result {
-		return &vision.Result{
-			Notes:      notes(40, money.FromNaira(500)),
-			Total:      twentyK,
-			Confidence: 0.9,
-		}
+// The failure that prompted this: a photograph the recognizer could not read
+// came back as a fraud accusation, because the screen-replay verdict was ranked
+// above "did we see anything". Somebody holding two real notes was told they
+// were photographing a screen.
+func TestUnreadablePhotoIsNotAnAccusation(t *testing.T) {
+	blank := &vision.Result{
+		Notes: nil, Total: 0, Confidence: 0,
+		ScreenReplay: true, PhotocopySuspected: true,
 	}
+	got := screen(blank, money.Kobo(100000))
+	if got == nil {
+		t.Fatal("an empty reading must still be refused")
+	}
+	if got.Code != "no_notes" {
+		t.Errorf("code = %q, want no_notes: a recognizer that saw nothing cannot "+
+			"say what it was looking at", got.Code)
+	}
+}
 
-	t.Run("a clean count passes", func(t *testing.T) {
-		if r := screen(good(), twentyK); r != nil {
-			t.Errorf("expected acceptance, got %q", r.Reason)
-		}
-	})
+// A poor but non-empty reading is a photography problem, not a fraud problem.
+func TestLowConfidenceOutranksSuspicion(t *testing.T) {
+	murky := &vision.Result{
+		Notes: twoFiveHundreds(), Total: 100000, Confidence: 0.2,
+		ScreenReplay: true,
+	}
+	got := screen(murky, money.Kobo(100000))
+	if got == nil || got.Code != "low_confidence" {
+		t.Fatalf("got %+v, want low_confidence", got)
+	}
+}
 
-	t.Run("a screen replay is refused", func(t *testing.T) {
-		v := good()
-		v.ScreenReplay = true
-		r := screen(v, twentyK)
-		if r == nil || r.Code != "screen_replay" {
-			t.Errorf("expected screen_replay, got %+v", r)
-		}
-	})
+// The guard must not blunt real fraud detection: a screen replay of cash shows
+// countable notes, which is the whole point of it.
+func TestAConfidentScreenReplayIsStillRefused(t *testing.T) {
+	replay := &vision.Result{
+		Notes: twoFiveHundreds(), Total: 100000, Confidence: 0.95,
+		ScreenReplay: true,
+	}
+	got := screen(replay, money.Kobo(100000))
+	if got == nil || got.Code != "screen_replay" {
+		t.Fatalf("got %+v, want screen_replay", got)
+	}
+}
 
-	t.Run("suspected photocopies are refused", func(t *testing.T) {
-		v := good()
-		v.PhotocopySuspected = true
-		if r := screen(v, twentyK); r == nil || r.Code != "photocopy" {
-			t.Errorf("expected photocopy, got %+v", r)
-		}
-	})
+func TestAConfidentPhotocopyIsStillRefused(t *testing.T) {
+	copied := &vision.Result{
+		Notes: twoFiveHundreds(), Total: 100000, Confidence: 0.95,
+		PhotocopySuspected: true,
+	}
+	got := screen(copied, money.Kobo(100000))
+	if got == nil || got.Code != "photocopy" {
+		t.Fatalf("got %+v, want photocopy", got)
+	}
+}
 
-	t.Run("an empty photograph is refused", func(t *testing.T) {
-		v := good()
-		v.Notes = nil
-		if r := screen(v, twentyK); r == nil || r.Code != "no_notes" {
-			t.Errorf("expected no_notes, got %+v", r)
-		}
-	})
+// Two 500s for a 1,000 transfer is the ordinary case and must pass. Any mix
+// adding to the declared amount is valid -- the denominations are the sender's
+// business, not the system's.
+func TestTwoFiveHundredsSettleAThousand(t *testing.T) {
+	clean := &vision.Result{
+		Notes: twoFiveHundreds(), Total: 100000, Confidence: 0.9,
+	}
+	if got := screen(clean, money.Kobo(100000)); got != nil {
+		t.Fatalf("refused a valid pledge: %+v", got)
+	}
+}
 
-	// Overstating is the fraud case; understating is a miscount. Both are
-	// refused, because a counterparty would reject the handover either way.
-	t.Run("a short count is refused", func(t *testing.T) {
-		v := good()
-		v.Total = money.FromNaira(19000)
-		if r := screen(v, twentyK); r == nil || r.Code != "amount_mismatch" {
-			t.Errorf("expected amount_mismatch, got %+v", r)
-		}
-	})
-
-	t.Run("an over count is refused", func(t *testing.T) {
-		v := good()
-		v.Total = money.FromNaira(21000)
-		if r := screen(v, twentyK); r == nil || r.Code != "amount_mismatch" {
-			t.Errorf("expected amount_mismatch, got %+v", r)
-		}
-	})
-
-	t.Run("an unclear photograph is refused", func(t *testing.T) {
-		v := good()
-		v.Confidence = 0.2
-		if r := screen(v, twentyK); r == nil || r.Code != "low_confidence" {
-			t.Errorf("expected low_confidence, got %+v", r)
-		}
-	})
+func TestAMiscountIsReportedAsOne(t *testing.T) {
+	short := &vision.Result{
+		Notes: twoFiveHundreds(), Total: 50000, Confidence: 0.9,
+	}
+	got := screen(short, money.Kobo(100000))
+	if got == nil || got.Code != "amount_mismatch" {
+		t.Fatalf("got %+v, want amount_mismatch", got)
+	}
 }

@@ -101,11 +101,22 @@ financial harm, and a disagreement is a useful signal rather than a problem to s
 Also read up to ` + `%d` + ` serial numbers, choosing only those you can read clearly. Skip any that
 are blurred, angled away, or covered. Reporting fewer is always better than guessing.
 
-Also judge:
+Also judge, and be conservative about both: these people are photographing their own
+money in ordinary rooms, and a wrong accusation costs somebody a transfer they were
+entitled to make.
+
   - screenReplay: is this a photograph of a screen displaying cash, rather than physical
-    paper? Look for moire patterns, a pixel grid, uniform backlight, a bezel, or glare.
-  - photocopySuspected: flat ink, no intaglio relief, wrong paper colour, missing security
-    thread or watermark.
+    paper? Say true only for evidence that a screen leaves and paper cannot: a moire
+    interference pattern, a visible pixel grid, or a device bezel around the image.
+    Glare and bright hotspots are NOT evidence -- a phone flash on real banknotes on a
+    table produces them constantly, and so does a polished surface. Neither is a dark or
+    bluish cast. If the notes look like paper but the photograph is merely poor, that is
+    low confidence, not a screen.
+  - photocopySuspected: say true only for something you can actually see -- flat uniform
+    ink with no tonal variation, obviously wrong paper colour, or a missing security
+    thread on a note otherwise clear enough to check. Worn, creased, dirty and faded
+    notes are normal currency in circulation and are not photocopies. If the image is
+    too poor to judge, lower confidence instead.
   - confidence: how sure you are of the COUNT specifically, from 0 to 1. Overlapping notes,
     poor light, or motion blur should all lower it.
 
