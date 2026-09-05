@@ -244,8 +244,14 @@ service needs to stay up.
 
 **Web → Vercel**
 
-Set **Root Directory** to `apps/web`, then add `NEXT_PUBLIC_API_URL` pointing at
-the Render URL. Set `CORS_ORIGIN` on the API to the Vercel URL afterwards.
+Root Directory is `apps/web`, and `NEXT_PUBLIC_API_URL` points at the Render URL.
+`CORS_ORIGIN` on the API names the Vercel origin.
+
+Both halves deploy from a push to `main`: Render builds the API, Vercel builds
+the PWA. They are separate builds of the same commit, so a change that spans the
+two -- a removed route and the screen that called it -- is briefly live on one
+side and not the other. Deploy the API first when the change is additive, and the
+PWA first when it removes something the old PWA still calls.
 
 ## API
 
