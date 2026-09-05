@@ -342,10 +342,19 @@ func (c *Client) GenerateFundingAccount(ctx context.Context, amount money.Kobo, 
 	// Sending an empty one earns "email must be an email", which says nothing
 	// about the setting that is actually missing -- so check it here, where the
 	// message can name it.
-	if strings.TrimSpace(c.cfg.FloatEmail) == "" || strings.TrimSpace(c.cfg.FloatPhone) == "" {
+	var missing []string
+	if strings.TrimSpace(c.cfg.FloatEmail) == "" {
+		missing = append(missing, "FINTAVA_FLOAT_EMAIL")
+	}
+	if strings.TrimSpace(c.cfg.FloatPhone) == "" {
+		missing = append(missing, "FINTAVA_FLOAT_PHONE")
+	}
+	if len(missing) > 0 {
+		// Name only what is actually absent. Listing both when one is already
+		// set sends the operator to check a setting that was never the problem.
 		return FundingAccount{}, fmt.Errorf(
-			"%w: set FINTAVA_FLOAT_EMAIL and FINTAVA_FLOAT_PHONE to the contact "+
-				"details for Tender's own float", ErrNotConfigured)
+			"%w: set %s to the contact details for Tender's own float",
+			ErrNotConfigured, strings.Join(missing, " and "))
 	}
 	if expireMin <= 0 {
 		expireMin = 60
