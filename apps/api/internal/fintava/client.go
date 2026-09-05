@@ -20,8 +20,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -35,6 +37,14 @@ import (
 const DefaultBaseURL = "https://dev.fintavapay.com/api/dev"
 
 var (
+	// ErrUnreadable means the provider answered successfully but the body held
+	// no account name under any key we know. That is not the same as the
+	// account not existing, and collapsing the two would let a decoding bug
+	// masquerade as a mistyped account number indefinitely -- the published
+	// reference documents this response as an empty object, so the key names
+	// here are inferred and could be wrong.
+	ErrUnreadable = errors.New("fintava: name enquiry answered in an unrecognised shape")
+
 	// ErrNotConfigured means no API key was supplied. Callers surface this as
 	// "bank transfers are unavailable" rather than pretending a payout worked.
 	ErrNotConfigured = errors.New("fintava: not configured")
@@ -224,13 +234,20 @@ func (c *Client) ResolveAccount(ctx context.Context, accountNumber, sortCode str
 	}
 
 	acct := Account{
-		AccountName:   pickString(fields, "accountName", "account_name", "name", "beneficiaryName", "accountname"),
-		AccountNumber: pickString(fields, "accountNumber", "account_number", "accountNo"),
+		AccountName: pickString(fields,
+			"accountName", "account_name", "name", "beneficiaryName", "accountname",
+			"AccountName", "acctName", "account_holder_name", "accountHolderName",
+			"customerName", "fullName", "beneficiary_name"),
+		AccountNumber: pickString(fields, "accountNumber", "account_number", "accountNo", "acctNo"),
 		SortCode:      pickString(fields, "sortCode", "sort_code", "bankCode", "code"),
 		BankName:      pickString(fields, "bankName", "bank_name", "bank"),
 	}
 	if acct.AccountName == "" {
-		return Account{}, ErrAccountNotFound
+		// Report the shape, never the values: this body is somebody's banking
+		// detail. The key names are enough to fix the decoder and carry no PII.
+		slog.Warn("name enquiry returned no readable account name",
+			"keys", shapeOf(fields), "sortCode", sortCode)
+		return Account{}, ErrUnreadable
 	}
 	if acct.AccountNumber == "" {
 		acct.AccountNumber = accountNumber
@@ -372,6 +389,23 @@ func Naira(k money.Kobo) json.Number {
 
 // pickString returns the first key that is present and non-empty. Nested "data"
 // objects are searched too, since some responses wrap the payload twice.
+// shapeOf lists the keys of a response, one level deep, so an unrecognised body
+// can be diagnosed from a log line without ever recording what it contained.
+func shapeOf(fields map[string]any) []string {
+	out := make([]string, 0, len(fields))
+	for k, v := range fields {
+		if nested, ok := v.(map[string]any); ok {
+			for nk := range nested {
+				out = append(out, k+"."+nk)
+			}
+			continue
+		}
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
 func pickString(fields map[string]any, keys ...string) string {
 	for _, k := range keys {
 		switch v := fields[k].(type) {

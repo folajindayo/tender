@@ -117,6 +117,14 @@ func (a *API) resolveAccount(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound,
 			errBody(errors.New("no account found with that number at this bank")))
 		return
+	case errors.Is(err, fintava.ErrUnreadable):
+		// The bank answered; we could not read the answer. Saying "no such
+		// account" here would blame the sender for our own decoding gap, and
+		// they would retype a correct number over and over.
+		slog.Error("name enquiry answered in an unrecognised shape", "sortCode", b.SortCode)
+		writeJSON(w, http.StatusBadGateway,
+			errBody(errors.New("the bank replied but we could not read the account name; this is our problem, not yours")))
+		return
 	case err != nil:
 		slog.Error("name enquiry failed", "err", err)
 		writeJSON(w, http.StatusBadGateway, errBody(errors.New("could not reach the bank")))
