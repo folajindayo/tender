@@ -91,24 +91,6 @@ func (s *Store) GetUser(ctx context.Context, id uuid.UUID) (*domain.User, error)
 	return scanUser(s.Pool.QueryRow(ctx, userSelect+` WHERE u.id = $1`, id))
 }
 
-func (s *Store) ListUsers(ctx context.Context) ([]domain.User, error) {
-	rows, err := s.Pool.Query(ctx, userSelect+` ORDER BY u.created_at`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var out []domain.User
-	for rows.Next() {
-		u, err := scanUser(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, *u)
-	}
-	return out, rows.Err()
-}
-
 const transferSelect = `
 SELECT t.id, t.ref, t.sender_id, t.recipient_id, t.amount_kobo, t.fee_kobo,
        t.mode::text, t.state::text, COALESCE(t.note,''), t.created_at,

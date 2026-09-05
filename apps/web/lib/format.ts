@@ -1,3 +1,5 @@
+import type { Payout, Transfer } from "./types";
+
 /** Renders an integer kobo amount the way a Nigerian user expects to read it. */
 export function naira(kobo: number, opts: { decimals?: boolean } = {}): string {
   const negative = kobo < 0;
@@ -48,10 +50,54 @@ const STATE_LABELS: Record<string, string> = {
   voided: "Cancelled",
   defaulted: "Unsettled",
   disputed: "Under review",
+  payout_failed: "Payout failed",
 };
 
 export function stateLabel(state: string): string {
   return STATE_LABELS[state] ?? state;
+}
+
+/**
+ * Who a transfer is going to. Usually a bank account somebody typed in, which
+ * is why the name shown is the one the bank returned rather than anything the
+ * sender chose.
+ */
+export function recipientLabel(t: Transfer): string {
+  return t.bank?.accountName ?? t.recipientName ?? "the recipient";
+}
+
+/**
+ * What has actually happened to the money at the bank end.
+ *
+ * A settled transfer is not the same claim as an arrived one: the ledger is
+ * balanced the moment cash changes hands, but the payout still has to clear.
+ * Saying so plainly is better than letting "settled" imply both.
+ */
+export function payoutLabel(p: Payout): { text: string; tone: "good" | "warn" | "bad" } {
+  switch (p.state) {
+    case "delivered":
+      return { text: `Paid into ${p.accountName}'s account.`, tone: "good" };
+    case "sent":
+    case "submitting":
+      return { text: `On its way to ${p.accountName}. Banks usually take minutes.`, tone: "good" };
+    case "pending":
+      return { text: "Queued for payout.", tone: "warn" };
+    case "unknown":
+      // Deliberately not retried anywhere: a transfer whose outcome is unknown
+      // must be checked, never re-sent.
+      return { text: "The bank has not confirmed this one yet. We are checking.", tone: "warn" };
+    case "returned":
+      return { text: "The bank returned it. The amount is back in your balance.", tone: "bad" };
+    case "failed":
+      return {
+        text: p.lastError
+          ? `The bank rejected it: ${p.lastError}`
+          : "The bank rejected it. The amount is back in your balance.",
+        tone: "bad",
+      };
+    default:
+      return { text: p.state, tone: "warn" };
+  }
 }
 
 const DENOMINATIONS = [100000, 50000, 20000, 10000, 5000, 2000, 1000, 500];

@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 
 import { api } from "@/lib/api";
-import { distance, naira, stateLabel, timeLeft } from "@/lib/format";
+import { distance, naira, payoutLabel, recipientLabel, stateLabel, timeLeft } from "@/lib/format";
 import type { IncidentKind, Match as MatchType, Transfer, User } from "@/lib/types";
 
 /**
@@ -132,7 +132,7 @@ function SenderSide({
         <div>
           <strong>Hand over {naira(t.amountKobo)} in cash</strong>
           {m.counterpartyName} will count the notes and quote your code. Once you both
-          confirm, {t.recipientName} is paid.
+          confirm, {recipientLabel(t)} is paid.
         </div>
       </div>
 
@@ -298,9 +298,22 @@ function Settled({ t, me, onBack }: { t: Transfer; me: User; onBack: () => void 
         <div className="muted">
           {received
             ? `Received from ${t.senderName}.`
-            : `Delivered to ${t.recipientName}. Transfer #${t.ref} is settled.`}
+            : `Handed over. Transfer #${t.ref} is settled.`}
         </div>
       </div>
+      {/* Settled means the cash changed hands and the ledger balanced. Whether
+          the bank has paid it out yet is a separate fact, and shown as one. */}
+      {t.payout && (
+        <div className={`banner ${payoutLabel(t.payout).tone === "bad" ? "danger" : payoutLabel(t.payout).tone === "warn" ? "warn" : "info"}`}>
+          <div>
+            <strong>
+              {t.payout.accountName}
+              {t.payout.bankName ? ` · ${t.payout.bankName}` : ""}
+            </strong>
+            {payoutLabel(t.payout).text}
+          </div>
+        </div>
+      )}
       <button className="btn" onClick={onBack}>
         Done
       </button>

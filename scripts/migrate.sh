@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Applies any migration that has not been applied yet, in filename order.
 set -euo pipefail
-DB_URL="${DATABASE_URL:-postgres://tender:tender@localhost:5432/tender?sslmode=disable}"
+DB_URL="${DATABASE_URL:-postgres://tender:tender@localhost:5433/tender?sslmode=disable}"
 cd "$(dirname "$0")/.."
 
 psql "$DB_URL" -v ON_ERROR_STOP=1 -q -c \

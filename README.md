@@ -9,12 +9,12 @@ bank queue or a POS agent. Tender does it by **not moving the cash into the bank
 system at all** — it moves it sideways to somebody nearby who wanted physical notes.
 
 ```
-Ada holds ₦20,000 cash in Lagos and wants to send it to Bola in Abuja.
+Ada holds ₦20,000 cash in Lagos and wants it in Bola's account in Abuja.
 Chidi, 400m away, holds ₦20,000 digitally and needs notes for his market stall.
 
 Ada photographs her cash        →  Chidi's ₦20,000 is locked in escrow
 Ada hands the notes to Chidi    →  both confirm with a six-digit code
-                                →  Chidi's ₦20,000 is released to Bola
+                                →  Chidi's ₦20,000 pays out to Bola's bank account
 ```
 
 The platform holds no cash, runs no vault, and makes no bank deposit. It is a
@@ -140,11 +140,45 @@ ERROR:  unbalanced ledger transaction 1ff2c35d…: entries sum to -1 kobo, must 
 
 `GET /v1/ledger/audit` exposes the books, including capital currently at risk.
 
+### Accounts and sessions
+
+Sign-up is an email address and a password, hashed with bcrypt. There is no email
+verification step: an unverified address is still a real credential for signing
+back in, and a wall between signing up and using the app would buy nothing here.
+
+A session is 32 bytes from a CSPRNG. Only its SHA-256 is stored, so a database
+copy does not yield working sessions, and it is returned both as a `Secure;
+SameSite=None` cookie and in the response body — the PWA and the API sit on
+different origins, so that cookie is third-party and some browsers drop it
+outright. The bearer header is what actually keeps a phone signed in. Signing out
+revokes one session rather than the account, so one phone does not sign the
+others out.
+
+Sign-in is rate limited per address and per source, an unknown address still
+costs a bcrypt compare so response time does not reveal who has an account, and
+every duplicate-registration collision returns the same wording so the endpoint
+cannot be used to enumerate accounts. There is deliberately no route listing
+users: nothing needs a directory of who holds an account.
+
+### The recipient is a bank account
+
+A transfer's destination is somebody's ordinary bank account, so the recipient
+needs no Tender account at all. The sender picks a bank and types the account
+number, and `POST /v1/accounts/resolve` returns the name the bank holds for it.
+That name is what gets stored and shown — never anything the sender typed — and
+is the check standing between a mistyped digit and cash handed over for nothing.
+Name enquiry is rate limited, because an open one is a way to harvest the name
+behind any account number in the country.
+
+Settled and arrived are different claims, and the app shows both: the ledger
+balances the moment cash changes hands, while the payout to the bank carries its
+own state.
+
 ## Running it locally
 
 ```bash
 # 1. Postgres
-docker compose up -d db          # or use a local instance on 5432
+docker compose up -d db          # publishes 5433, so it cannot collide with a local 5432
 pnpm db:migrate
 
 # 2. Accounts and settlement float (idempotent)
@@ -217,9 +251,13 @@ the Render URL. Set `CORS_ORIGIN` on the API to the Vercel URL afterwards.
 
 | | |
 |---|---|
-| `POST /v1/users` | register an account |
-| `GET /v1/users` · `/v1/users/{id}` | accounts and balances |
+| `POST /v1/auth/signup` · `/v1/auth/signin` | email and password; returns a session token |
+| `POST /v1/auth/signout` · `GET /v1/auth/me` | end a session, or read the one you hold |
+| `POST /v1/users` | register an account without credentials (seeding, tests) |
+| `GET /v1/users/{id}` | one account and its balances |
 | `GET /v1/users/{id}/transfers` | activity |
+| `GET /v1/banks` | the bank directory a recipient account can belong to |
+| `POST /v1/accounts/resolve` | name enquiry: account number → the name the bank holds |
 | `POST /v1/pledge` | photograph cash (multipart `photo`, or base64 JSON) |
 | `POST /v1/transfers/{id}/match` | look for a counterparty again |
 | `POST /v1/transfers/{id}/confirm` | confirm the handover (counterparty supplies the code) |

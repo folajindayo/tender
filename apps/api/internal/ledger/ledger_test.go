@@ -19,7 +19,7 @@ func testPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	url := os.Getenv("DATABASE_URL")
 	if url == "" {
-		url = "postgres://tender:tender@localhost:5432/tender?sslmode=disable"
+		url = "postgres://tender:tender@localhost:5433/tender?sslmode=disable"
 	}
 	pool, err := pgxpool.New(context.Background(), url)
 	if err != nil {

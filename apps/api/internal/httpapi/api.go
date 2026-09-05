@@ -82,7 +82,9 @@ func (a *API) Router() http.Handler {
 
 	r.Route("/v1", func(r chi.Router) {
 		r.Post("/users", a.createUser)
-		r.Get("/users", a.listUsers)
+		// There is deliberately no route listing every user. Nothing in the app
+		// needs a directory of who holds an account, and publishing names,
+		// cities and balances is not a thing to do by accident.
 		r.Get("/users/{id}", a.getUser)
 		r.Get("/users/{id}/transfers", a.userTransfers)
 

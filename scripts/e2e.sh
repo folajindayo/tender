@@ -9,7 +9,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PORT="${E2E_PORT:-8099}"
 API="http://localhost:$PORT"
-export DATABASE_URL="${DATABASE_URL:-postgres://tender:tender@localhost:5432/tender?sslmode=disable}"
+export DATABASE_URL="${DATABASE_URL:-postgres://tender:tender@localhost:5433/tender?sslmode=disable}"
 DB="$DATABASE_URL"
 TMP="$(mktemp -d)"
 FAILED=0
@@ -235,6 +235,65 @@ expect "still disputed"                               "$(curl -s "$API/v1/transf
 expect "a suspended operator cannot post cash requests" \
   "$(curl -sX POST "$API/v1/cashouts" -H 'Content-Type: application/json' -d "{\"userId\":\"$CP4\",\"amountKobo\":100000,\"venueId\":\"$(curl -s "$API/v1/venues?operatorId=$CP4" | jq -r '.[0].id')\"}" | jq -r '.code')" "suspended"
 expect "ledger still balanced" "$(curl -s "$API/v1/ledger/audit" | jq -r '.unbalancedTransactions')" "0"
+
+# ---------------------------------------------------------------- auth
+bold "Signing up and signing in"
+
+EMAIL="e2e-$RANDOM-$RANDOM@tender.test"
+PASS="correct horse battery"
+
+R=$(curl -sX POST "$API/v1/auth/signup" -H 'Content-Type: application/json' \
+      -d "{\"email\":\"$EMAIL\",\"password\":\"$PASS\",\"displayName\":\"E2E Tester\",\"city\":\"Lagos\"}")
+TOKEN=$(echo "$R" | jq -r '.token')
+NEWUSER=$(echo "$R" | jq -r '.user.id')
+[ "$TOKEN" != "null" ] && [ -n "$TOKEN" ] && pass "signup returns a session token" \
+  || fail "signup returns a session token — got $(echo "$R" | jq -c .)"
+expect "a new account starts at zero" "$(echo "$R" | jq -r '.user.availableKobo')" "0"
+expect "and with no credit line"      "$(echo "$R" | jq -r '.user.creditLimitKobo')" "0"
+
+expect "the token identifies the account" \
+  "$(curl -s "$API/v1/auth/me" -H "Authorization: Bearer $TOKEN" | jq -r '.id')" "$NEWUSER"
+expect "an unauthenticated caller is nobody" \
+  "$(curl -s -o /dev/null -w '%{http_code}' "$API/v1/auth/me")" "401"
+
+# Registering the same address twice must not create a second account, and must
+# not say which field collided -- that answer is an account-enumeration tool.
+expect "the address cannot be registered twice" \
+  "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$API/v1/auth/signup" -H 'Content-Type: application/json' \
+       -d "{\"email\":\"$EMAIL\",\"password\":\"$PASS\",\"displayName\":\"Impostor\"}")" "409"
+
+expect "a short password is refused" \
+  "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$API/v1/auth/signup" -H 'Content-Type: application/json' \
+       -d '{"email":"short@tender.test","password":"seven77","displayName":"Short"}')" "400"
+
+expect "the wrong password does not sign in" \
+  "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$API/v1/auth/signin" -H 'Content-Type: application/json' \
+       -d "{\"email\":\"$EMAIL\",\"password\":\"not the password\"}")" "401"
+expect "an unknown address does not sign in" \
+  "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$API/v1/auth/signin" -H 'Content-Type: application/json' \
+       -d '{"email":"nobody@tender.test","password":"correct horse battery"}')" "401"
+
+# The address is matched case-insensitively: nobody types their own email the
+# same way twice, and two accounts differing only in case is a trap.
+R2=$(curl -sX POST "$API/v1/auth/signin" -H 'Content-Type: application/json' \
+       -d "{\"email\":\"$(echo "$EMAIL" | tr '[:lower:]' '[:upper:]')\",\"password\":\"$PASS\"}")
+expect "signing in reaches the same account" "$(echo "$R2" | jq -r '.user.id')" "$NEWUSER"
+TOKEN2=$(echo "$R2" | jq -r '.token')
+[ "$TOKEN2" != "$TOKEN" ] && pass "each sign-in issues its own token" \
+  || fail "each sign-in issues its own token"
+
+curl -sX POST "$API/v1/auth/signout" -H "Authorization: Bearer $TOKEN2" >/dev/null
+expect "a signed-out token is dead" \
+  "$(curl -s -o /dev/null -w '%{http_code}' "$API/v1/auth/me" -H "Authorization: Bearer $TOKEN2")" "401"
+# Revocation is per session, not per account: signing out of one phone must not
+# sign the account out of every other one.
+expect "the other session survives" \
+  "$(curl -s "$API/v1/auth/me" -H "Authorization: Bearer $TOKEN" | jq -r '.id')" "$NEWUSER"
+
+# 405, not 404: the path still takes a POST to register an account. What
+# matters is that no GET on it hands back a list of everyone.
+expect "the user directory is not published" \
+  "$(curl -s -o /dev/null -w '%{http_code}' "$API/v1/users")" "405"
 
 bold "Result"
 if [ "$FAILED" = "0" ]; then

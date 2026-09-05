@@ -50,13 +50,37 @@ export type TransferState =
   | "rejected"
   | "voided"
   | "defaulted"
-  | "disputed";
+  | "disputed"
+  | "payout_failed";
+
+/** A destination outside Tender. The account name is what the bank returned
+ *  for the number, never what the sender typed. */
+export type BankAccount = {
+  accountNumber: string;
+  accountName: string;
+  sortCode: string;
+  bankName?: string;
+};
+
+export type Bank = { code: string; name: string };
+
+/** Where a settled bank transfer has actually got to. "Settled" and "arrived"
+ *  are different claims and the sender is shown both. */
+export type Payout = {
+  state: "pending" | "submitting" | "sent" | "unknown" | "delivered" | "failed" | "returned";
+  accountName: string;
+  bankName?: string;
+  reference?: string;
+  lastError?: string;
+};
 
 export type Transfer = {
   id: string;
   ref: number;
   senderId: string;
-  recipientId: string;
+  /** Exactly one of these is set. */
+  recipientId?: string;
+  bank?: BankAccount | null;
   amountKobo: number;
   feeKobo: number;
   mode: "escrow" | "credit";
@@ -67,6 +91,7 @@ export type Transfer = {
   settledAt?: string;
   senderName?: string;
   recipientName?: string;
+  payout?: Payout | null;
   match?: Match | null;
 };
 
@@ -152,3 +177,6 @@ export type Audit = {
   capitalAtRiskKobo: number;
   escrowedKobo: number;
 };
+
+/** What POST /v1/auth/signin and /signup return. */
+export type Session = { token: string; user: User };

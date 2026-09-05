@@ -1,6 +1,6 @@
 "use client";
 
-import { naira, relativeTime, stateLabel } from "@/lib/format";
+import { naira, recipientLabel, relativeTime, stateLabel } from "@/lib/format";
 import type { Transfer, User } from "@/lib/types";
 
 export function Home({
@@ -88,7 +88,7 @@ function TransferRow({
   const incoming = t.recipientId === me.id;
   const settling = t.match?.counterpartyId === me.id;
 
-  let who = incoming ? `From ${t.senderName}` : `To ${t.recipientName}`;
+  let who = incoming ? `From ${t.senderName}` : `To ${recipientLabel(t)}`;
   if (settling) who = `Cash from ${t.senderName}`;
 
   const settled = t.state === "settled";

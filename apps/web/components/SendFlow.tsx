@@ -1,46 +1,43 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
-import { api } from "@/lib/api";
+import { ApiError, api } from "@/lib/api";
 import { captureFrame, openRearCamera, shrinkFile } from "@/lib/camera";
 import { breakdown, naira, tally } from "@/lib/format";
-import type { PledgeResult, User } from "@/lib/types";
+import type { Bank, BankAccount, PledgeResult, User } from "@/lib/types";
 
 type Step = "amount" | "capture" | "working" | "result";
 
 const QUICK = [100000, 500000, 1000000, 2000000]; // ₦1k, ₦5k, ₦10k, ₦20k
 
+/** Nigerian NUBAN account numbers are always ten digits. */
+const ACCOUNT_DIGITS = 10;
+
 export function SendFlow({
   me,
-  people,
   onDone,
 }: {
   me: User;
-  people: User[];
   onDone: (transferId: string) => void;
 }) {
   const [step, setStep] = useState<Step>("amount");
   const [amount, setAmount] = useState("");
-  const [recipient, setRecipient] = useState("");
+  const [account, setAccount] = useState<BankAccount | null>(null);
   const [note, setNote] = useState("");
   const [result, setResult] = useState<PledgeResult | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const kobo = Math.round(Number(amount.replace(/[^0-9.]/g, "")) * 100) || 0;
-  const others = people.filter((p) => p.id !== me.id);
-
-  useEffect(() => {
-    if (!recipient && others.length) setRecipient(others[0].id);
-  }, [others, recipient]);
 
   async function submit(photo: Blob) {
+    if (!account) return;
     setStep("working");
     setError(null);
     try {
       const res = await api.pledge({
         senderId: me.id,
-        recipientId: recipient,
+        account,
         amountKobo: kobo,
         note,
         photo,
@@ -54,7 +51,7 @@ export function SendFlow({
   }
 
   if (step === "amount") {
-    const canContinue = kobo > 0 && !!recipient && !me.sendingFrozen;
+    const canContinue = kobo > 0 && account !== null && !me.sendingFrozen;
     return (
       <div className="stack">
         {me.sendingFrozen && (
@@ -88,17 +85,9 @@ export function SendFlow({
           </div>
         </div>
 
+        <Destination userId={me.id} account={account} onResolved={setAccount} />
+
         <div className="card stack">
-          <div className="field">
-            <label htmlFor="to">Send it to</label>
-            <select id="to" value={recipient} onChange={(e) => setRecipient(e.target.value)}>
-              {others.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.avatarEmoji} {p.displayName} — {p.city}
-                </option>
-              ))}
-            </select>
-          </div>
           <div className="field">
             <label htmlFor="note">What is it for? (optional)</label>
             <input
@@ -114,7 +103,7 @@ export function SendFlow({
         {kobo > 0 && (
           <div className="muted center">
             {naira(kobo)} in cash · a 0.5% fee comes out of the amount, so{" "}
-            {others.find((p) => p.id === recipient)?.displayName ?? "they"} receives{" "}
+            {account ? account.accountName : "they"} receives{" "}
             <strong style={{ color: "var(--text)" }}>
               {naira(kobo - Math.floor((kobo * 50) / 10000))}
             </strong>
@@ -163,6 +152,168 @@ export function SendFlow({
       }}
       onDone={onDone}
     />
+  );
+}
+
+/* ------------------------------------------------------------ destination */
+
+/**
+ * Where the money is going: a bank, an account number, and the name the bank
+ * holds for it.
+ *
+ * The name is never typed. It comes back from name enquiry and the sender has
+ * to see it before they can go on, because reading the name back is the only
+ * check standing between a mistyped digit and cash handed to a stranger for
+ * nothing. A destination is only accepted once the bank has confirmed it, so
+ * `onResolved(null)` fires the moment either field is edited.
+ */
+function Destination({
+  userId,
+  account,
+  onResolved,
+}: {
+  userId: string;
+  account: BankAccount | null;
+  onResolved: (account: BankAccount | null) => void;
+}) {
+  const [banks, setBanks] = useState<Bank[]>([]);
+  const [banksError, setBanksError] = useState<string | null>(null);
+  const [sortCode, setSortCode] = useState("");
+  const [number, setNumber] = useState("");
+  const [looking, setLooking] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    api
+      .banks()
+      .then((list) => {
+        if (!live) return;
+        // Alphabetical: this list is long, and a sender is looking for one name.
+        setBanks([...list].sort((a, b) => a.name.localeCompare(b.name)));
+      })
+      .catch((e) => {
+        if (live) setBanksError(e instanceof Error ? e.message : "Could not load banks.");
+      });
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  // Every lookup is tagged so a slow earlier response cannot overwrite a newer
+  // one -- otherwise correcting a typo can leave the previous account's name on
+  // screen, which is precisely the thing this screen exists to prevent.
+  const attempt = useRef(0);
+
+  const resolve = useCallback(
+    async (code: string, acct: string) => {
+      const mine = ++attempt.current;
+      setLooking(true);
+      setError(null);
+      try {
+        const found = await api.resolveAccount({
+          userId,
+          accountNumber: acct,
+          sortCode: code,
+        });
+        if (mine !== attempt.current) return;
+        onResolved(found);
+      } catch (e) {
+        if (mine !== attempt.current) return;
+        onResolved(null);
+        setError(
+          e instanceof ApiError && e.status === 404
+            ? "No account with that number at this bank. Check the digits."
+            : e instanceof Error
+              ? e.message
+              : "Could not check that account.",
+        );
+      } finally {
+        if (mine === attempt.current) setLooking(false);
+      }
+    },
+    [userId, onResolved],
+  );
+
+  // Look the account up as soon as it can be looked up. Waiting for a button
+  // press just means the sender presses two buttons instead of one.
+  useEffect(() => {
+    if (sortCode === "" || number.length !== ACCOUNT_DIGITS) {
+      attempt.current++;
+      onResolved(null);
+      setError(null);
+      setLooking(false);
+      return;
+    }
+    void resolve(sortCode, number);
+  }, [sortCode, number, resolve, onResolved]);
+
+  if (banksError) {
+    return (
+      <div className="banner warn">
+        <div>
+          <strong>Bank transfers are unavailable</strong>
+          {banksError}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="card stack">
+      <div className="field">
+        <label htmlFor="bank">Recipient&rsquo;s bank</label>
+        <select id="bank" value={sortCode} onChange={(e) => setSortCode(e.target.value)}>
+          <option value="">
+            {banks.length === 0 ? "Loading banks…" : "Choose a bank"}
+          </option>
+          {banks.map((b) => (
+            <option key={b.code} value={b.code}>
+              {b.name}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      <div className="field">
+        <label htmlFor="account">Account number</label>
+        <input
+          id="account"
+          inputMode="numeric"
+          autoComplete="off"
+          placeholder="0123456789"
+          value={number}
+          onChange={(e) =>
+            setNumber(e.target.value.replace(/\D/g, "").slice(0, ACCOUNT_DIGITS))
+          }
+        />
+      </div>
+
+      {looking && (
+        <div className="muted">
+          <span className="spinner" /> Checking the account…
+        </div>
+      )}
+
+      {error && (
+        <div className="banner danger">
+          <div>{error}</div>
+        </div>
+      )}
+
+      {account && !looking && (
+        <div className="meet">
+          <div className="who">{account.accountName}</div>
+          <div className="where">
+            {account.bankName ?? "Bank"} · {account.accountNumber}
+          </div>
+          <div className="muted" style={{ marginTop: 8 }}>
+            Check this is the right person before you hand any cash over. Once the
+            handover is confirmed the money is gone.
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -334,18 +485,19 @@ function PledgeOutcome({
   }
 
   const t = result.transfer!;
+  const who = t.bank?.accountName ?? t.recipientName ?? "The recipient";
   return (
     <div className="stack">
       <div className="banner info">
         <div>
           <strong>
             {t.mode === "credit"
-              ? `${t.recipientName} has been paid already`
-              : `${t.recipientName} can see the money coming`}
+              ? `${who} has been paid already`
+              : `${who} is expecting the money`}
           </strong>
           {t.mode === "credit"
             ? "Your instant credit covered it. Hand the cash over to settle."
-            : "It lands the moment you hand the cash to the counterparty below."}
+            : "It is sent the moment you hand the cash to the counterparty below."}
         </div>
       </div>
       {result.vision && <VisionSummary result={result} />}

@@ -16,3 +16,4 @@ apps/api/testdata/naira/*
 
 # Deploy-time secrets. Never committed.
 .env.deploy
+*.tsbuildinfo

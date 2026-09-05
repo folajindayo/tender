@@ -2,58 +2,59 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { Auth } from "@/components/Auth";
 import { Books } from "@/components/Books";
 import { CashOut } from "@/components/CashOut";
 import { Handover } from "@/components/Handover";
 import { Home } from "@/components/Home";
-import { PersonaPicker } from "@/components/PersonaPicker";
 import { SendFlow } from "@/components/SendFlow";
 import { api, subscribe } from "@/lib/api";
 import { useSession } from "@/lib/session";
-import type { Audit, CashoutRequest, Transfer, User, Venue } from "@/lib/types";
+import type { Audit, CashoutRequest, Transfer, Venue } from "@/lib/types";
 
 type Tab = "home" | "send" | "cashout" | "books";
 
 export default function Page() {
-  const { userId, ready, signIn, signOut } = useSession();
+  const { me, setMe, ready, signIn, signUp, signOut } = useSession();
+  const userId = me?.id ?? null;
 
-  const [users, setUsers] = useState<User[]>([]);
   const [transfers, setTransfers] = useState<Transfer[]>([]);
   const [requests, setRequests] = useState<CashoutRequest[]>([]);
   const [venues, setVenues] = useState<Venue[]>([]);
   const [audit, setAudit] = useState<Audit | null>(null);
   const [tab, setTab] = useState<Tab>("home");
   const [openTransferId, setOpenTransferId] = useState<string | null>(null);
-  const [switching, setSwitching] = useState(false);
   const [offline, setOffline] = useState(false);
   const [flash, setFlash] = useState<string | null>(null);
 
-  const me = useMemo(() => users.find((u) => u.id === userId) ?? null, [users, userId]);
   const openTransfer = useMemo(
     () => transfers.find((t) => t.id === openTransferId) ?? null,
     [transfers, openTransferId],
   );
 
   const refresh = useCallback(async () => {
+    if (!userId) return;
     try {
-      setUsers((await api.users()) ?? []);
-      if (userId) {
-        // Cash requests and venues are per-account: the demand book is never
-        // published, so there is nothing to fetch until we know who is asking.
-        const [ts, cs, vs] = await Promise.all([
-          api.transfers(userId),
-          api.cashouts(userId),
-          api.venues(userId),
-        ]);
-        setTransfers(ts ?? []);
-        setRequests(cs ?? []);
-        setVenues(vs ?? []);
-      }
+      // Balances move without this device doing anything -- an escrow release
+      // or a payout return lands here -- so the account is re-read alongside
+      // its activity rather than trusted from sign-in.
+      // Cash requests and venues are per-account: the demand book is never
+      // published, so there is nothing to fetch until we know who is asking.
+      const [user, ts, cs, vs] = await Promise.all([
+        api.user(userId),
+        api.transfers(userId),
+        api.cashouts(userId),
+        api.venues(userId),
+      ]);
+      setMe(user);
+      setTransfers(ts ?? []);
+      setRequests(cs ?? []);
+      setVenues(vs ?? []);
       setOffline(false);
     } catch {
       setOffline(true);
     }
-  }, [userId]);
+  }, [userId, setMe]);
 
   useEffect(() => {
     void refresh();
@@ -88,40 +89,18 @@ export default function Page() {
 
   if (!ready) return <div className="app" />;
 
-  if (!userId || switching) {
-    return (
-      <PersonaPicker
-        users={users}
-        onPick={(id) => {
-          signIn(id);
-          setSwitching(false);
-          setTab("home");
-        }}
-        onClose={switching ? () => setSwitching(false) : undefined}
-      />
-    );
-  }
-
   if (!me) {
     return (
-      <div className="app">
-        <main>
-          <div className="banner warn">
-            <div>
-              <strong>{offline ? "Cannot reach Tender" : "That account is gone"}</strong>
-              {offline
-                ? "Check the connection and try again."
-                : "The account on this phone no longer exists."}
-            </div>
-          </div>
-          <button className="btn" onClick={() => void refresh()}>
-            Try again
-          </button>
-          <button className="btn ghost" onClick={signOut}>
-            Choose another account
-          </button>
-        </main>
-      </div>
+      <Auth
+        onSignIn={async (email, password) => {
+          await signIn(email, password);
+          setTab("home");
+        }}
+        onSignUp={async (input) => {
+          await signUp(input);
+          setTab("home");
+        }}
+      />
     );
   }
 
@@ -131,9 +110,9 @@ export default function Page() {
         <div className="wordmark">
           ten<span>der</span>
         </div>
-        <button className="persona" onClick={() => setSwitching(true)}>
+        <button className="persona" onClick={() => void signOut()}>
           <span className="avatar">{me.avatarEmoji}</span>
-          {me.displayName.split(" ")[0]}
+          {me.displayName.split(" ")[0]} · Sign out
         </button>
       </header>
 
@@ -170,7 +149,6 @@ export default function Page() {
         ) : tab === "send" ? (
           <SendFlow
             me={me}
-            people={users}
             onDone={(id) => {
               setOpenTransferId(id);
               setTab("home");

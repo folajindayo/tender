@@ -17,15 +17,6 @@ import (
 
 const maxUpload = 12 << 20 // phones produce large photos even after downscaling
 
-func (a *API) listUsers(w http.ResponseWriter, r *http.Request) {
-	users, err := a.Store.ListUsers(r.Context())
-	if err != nil {
-		fail(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, users)
-}
-
 func (a *API) getUser(w http.ResponseWriter, r *http.Request) {
 	id, err := uuidParam(r, "id")
 	if err != nil {

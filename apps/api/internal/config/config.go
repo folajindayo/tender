@@ -62,7 +62,7 @@ type Config struct {
 
 func Load() (Config, error) {
 	c := Config{
-		DatabaseURL:          env("DATABASE_URL", "postgres://tender:tender@localhost:5432/tender?sslmode=disable"),
+		DatabaseURL:          env("DATABASE_URL", "postgres://tender:tender@localhost:5433/tender?sslmode=disable"),
 		Port:                 env("PORT", "8080"),
 		CORSOrigin:           env("CORS_ORIGIN", "https://tender-pwa.vercel.app"),
 		VisionMode:           env("VISION_MODE", "claude"),
