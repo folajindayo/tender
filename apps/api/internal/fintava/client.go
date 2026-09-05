@@ -68,6 +68,13 @@ type Config struct {
 	// WebhookSecret verifies inbound events. See webhook.go.
 	WebhookSecret string
 
+	// Contact details attached to a float top-up account. Fintava requires a
+	// phone and email on a virtual wallet; these identify Tender's own float,
+	// not any user, so they are operator configuration rather than per-request
+	// input.
+	FloatPhone string
+	FloatEmail string
+
 	Timeout time.Duration
 }
 
@@ -258,6 +265,115 @@ func (c *Client) ResolveAccount(ctx context.Context, accountNumber, sortCode str
 	return acct, nil
 }
 
+// ---------------------------------------------------------------- float
+
+// Float is Tender's settlement capital as Fintava holds it.
+//
+// Every bank payout debits this wallet. It is the real constraint on
+// settlement: a transfer can be perfectly valid, escrowed and handed over, and
+// still fail to pay out because this number is too small.
+type Float struct {
+	// Balance is what the merchant wallet actually holds.
+	Balance money.Kobo `json:"balanceKobo"`
+	// Ledger is what Tender's own books say the float is. The two are kept
+	// side by side because they answer different questions and can disagree.
+	Ledger money.Kobo `json:"ledgerKobo"`
+	// Drift is Balance - Ledger. Non-zero means money moved at the bank that
+	// the books do not know about, or the reverse.
+	Drift    money.Kobo `json:"driftKobo"`
+	Currency string     `json:"currency,omitempty"`
+}
+
+// MerchantBalance reads the float held at Fintava.
+//
+// The published reference documents the response as an empty object, so the
+// amount is read tolerantly like everything else here. A balance that cannot be
+// read is an error rather than a zero: reporting "no float" when the truth is
+// "we could not ask" would be the wrong answer to the only question this
+// endpoint exists to settle.
+func (c *Client) MerchantBalance(ctx context.Context) (money.Kobo, error) {
+	data, err := c.do(ctx, http.MethodGet, "/merchant/balance", nil)
+	if err != nil {
+		return 0, err
+	}
+
+	var fields map[string]any
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return 0, fmt.Errorf("decode merchant balance: %w", err)
+	}
+	if _, ok := findAny(fields, balanceKeys); !ok {
+		slog.Warn("merchant balance returned no readable amount", "keys", shapeOf(fields))
+		return 0, ErrUnreadable
+	}
+	return pickKobo(fields, balanceKeys...), nil
+}
+
+// The names a balance might plausibly arrive under. availableBalance comes
+// first: where a provider distinguishes it from a book balance, available is
+// the one that can actually be paid out.
+var balanceKeys = []string{
+	"availableBalance", "available_balance", "balance", "walletBalance",
+	"wallet_balance", "amount", "currentBalance", "ledgerBalance",
+}
+
+// FundingAccount is a one-time bank account that tops the float up. Money paid
+// into it credits the merchant wallet.
+type FundingAccount struct {
+	AccountNumber string     `json:"accountNumber"`
+	AccountName   string     `json:"accountName"`
+	BankName      string     `json:"bankName"`
+	Amount        money.Kobo `json:"amountKobo"`
+	Reference     string     `json:"reference"`
+	ExpiresInMin  int        `json:"expiresInMin"`
+}
+
+// GenerateFundingAccount asks Fintava for an account to pay the float up by a
+// specific amount.
+//
+// These accounts are single-use and amount-specific by design, which is a
+// property worth keeping rather than working around: an account that only
+// accepts the amount it was issued for cannot quietly absorb a payment nobody
+// is expecting.
+func (c *Client) GenerateFundingAccount(ctx context.Context, amount money.Kobo, reference string, expireMin int) (FundingAccount, error) {
+	if amount <= 0 {
+		return FundingAccount{}, errors.New("fintava: funding amount must be positive")
+	}
+	if expireMin <= 0 {
+		expireMin = 60
+	}
+	data, err := c.do(ctx, http.MethodPost, "/virtual-wallet/generate", map[string]any{
+		"customerName":      "Tender Float",
+		"merchantReference": reference,
+		"amount":            Naira(amount),
+		"expireTimeInMin":   expireMin,
+		"phone":             c.cfg.FloatPhone,
+		"email":             c.cfg.FloatEmail,
+		"description":       "Tender settlement float top-up",
+	})
+	if err != nil {
+		return FundingAccount{}, err
+	}
+
+	var fields map[string]any
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return FundingAccount{}, fmt.Errorf("decode virtual wallet: %w", err)
+	}
+
+	acct := FundingAccount{
+		AccountNumber: pickString(fields, "virtualAcctNo", "accountNumber", "account_number"),
+		AccountName:   pickString(fields, "virtualAcctName", "accountName", "customerName"),
+		BankName:      pickString(fields, "bank", "bankName", "bank_name"),
+		Reference:     pickString(fields, "merchantReference", "reference", "id"),
+		Amount:        amount,
+		ExpiresInMin:  expireMin,
+	}
+	if acct.AccountNumber == "" {
+		slog.Warn("virtual wallet returned no account number", "keys", shapeOf(fields))
+		return FundingAccount{}, ErrUnreadable
+	}
+	return acct, nil
+}
+
 // ---------------------------------------------------------------- payout
 
 type BankCreditRequest struct {
@@ -389,6 +505,18 @@ func Naira(k money.Kobo) json.Number {
 
 // pickString returns the first key that is present and non-empty. Nested "data"
 // objects are searched too, since some responses wrap the payload twice.
+// findAny reports whether any of `keys` is present anywhere in the response,
+// which distinguishes a genuine zero balance from a body we could not read.
+func findAny(fields map[string]any, keys []string) (any, bool) {
+	got := search(fields, func(v any) (any, bool) {
+		if v == nil {
+			return nil, false
+		}
+		return v, true
+	}, keys)
+	return got, got != nil
+}
+
 // shapeOf lists the keys of a response, one level deep, so an unrecognised body
 // can be diagnosed from a log line without ever recording what it contained.
 func shapeOf(fields map[string]any) []string {

@@ -43,6 +43,8 @@ type Config struct {
 	FintavaAPIKey        string
 	FintavaSourceID      string
 	FintavaWebhookSecret string
+	FintavaFloatPhone    string
+	FintavaFloatEmail    string
 
 	// How often unsent payouts are pushed, and how long a payout may sit in a
 	// non-final state before it is chased with the provider.
@@ -83,6 +85,8 @@ func Load() (Config, error) {
 		FintavaAPIKey:        env("FINTAVA_API_KEY", ""),
 		FintavaSourceID:      env("FINTAVA_SOURCE_ID", ""),
 		FintavaWebhookSecret: env("FINTAVA_WEBHOOK_SECRET", ""),
+		FintavaFloatPhone:    env("FINTAVA_FLOAT_PHONE", ""),
+		FintavaFloatEmail:    env("FINTAVA_FLOAT_EMAIL", ""),
 		PayoutInterval:       envDuration("PAYOUT_INTERVAL", 30*time.Second),
 		PayoutStaleAfter:     envDuration("PAYOUT_STALE_AFTER", 2*time.Minute),
 	}

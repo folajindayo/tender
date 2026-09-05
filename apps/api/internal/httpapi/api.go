@@ -95,6 +95,8 @@ func (a *API) Router() http.Handler {
 		r.Get("/auth/me", a.me)
 
 		r.Get("/banks", a.listBanks)
+		r.Get("/float", a.floatStatus)
+		r.Post("/float/fund", a.fundFloat)
 		r.Post("/accounts/resolve", a.resolveAccount)
 
 		r.Get("/venues", a.listVenues)

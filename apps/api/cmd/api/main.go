@@ -59,6 +59,8 @@ func main() {
 		APIKey:        cfg.FintavaAPIKey,
 		SourceID:      cfg.FintavaSourceID,
 		WebhookSecret: cfg.FintavaWebhookSecret,
+		FloatPhone:    cfg.FintavaFloatPhone,
+		FloatEmail:    cfg.FintavaFloatEmail,
 	})
 	payouts := &payout.Service{Pool: st.Pool, Client: bank, Hub: hub}
 

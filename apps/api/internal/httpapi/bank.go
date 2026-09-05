@@ -16,6 +16,7 @@ import (
 
 	"tender/api/internal/fintava"
 	"tender/api/internal/ledger"
+	"tender/api/internal/money"
 )
 
 // ---------------------------------------------------------------- bank list
@@ -195,6 +196,89 @@ func clientIP(r *http.Request) string {
 		return strings.TrimSpace(strings.Split(fwd, ",")[0])
 	}
 	return r.RemoteAddr
+}
+
+// ---------------------------------------------------------------- float
+
+// floatStatus reports Tender's settlement capital.
+//
+// It answers two questions at once, because either alone is misleading. The
+// ledger figure is what Tender's books believe it holds; the Fintava figure is
+// what the bank rail will actually let it pay out. A settlement is limited by
+// the second, and a difference between them means money moved somewhere the
+// books have not recorded -- worth seeing before it is discovered by a payout
+// failing.
+func (a *API) floatStatus(w http.ResponseWriter, r *http.Request) {
+	audit, err := a.Store.LedgerAudit(r.Context(), 1)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+
+	out := fintava.Float{Ledger: audit.FloatKobo, Currency: "NGN"}
+
+	balance, err := a.Fintava.MerchantBalance(r.Context())
+	switch {
+	case errors.Is(err, fintava.ErrNotConfigured):
+		writeJSON(w, http.StatusServiceUnavailable,
+			errBody(errors.New("the bank rail is not configured on this deployment")))
+		return
+	case err != nil:
+		// The books are still worth returning: knowing what Tender thinks it
+		// holds is useful even when the rail cannot be reached to confirm it.
+		slog.Error("merchant balance failed", "err", err)
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ledgerKobo": out.Ledger,
+			"currency":   out.Currency,
+			"error":      "could not read the balance held at the bank",
+		})
+		return
+	}
+
+	out.Balance = balance
+	out.Drift = balance - out.Ledger
+	writeJSON(w, http.StatusOK, out)
+}
+
+// fundFloat issues a one-time account that tops the float up.
+//
+// The amount is required and the account only accepts it, which is the point:
+// a standing account that swallows any payment makes it impossible to say later
+// which transfer a credit belonged to.
+func (a *API) fundFloat(w http.ResponseWriter, r *http.Request) {
+	var b struct {
+		AmountKobo   int64  `json:"amountKobo"`
+		Reference    string `json:"reference"`
+		ExpiresInMin int    `json:"expiresInMin"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 4<<10)).Decode(&b); err != nil {
+		writeJSON(w, http.StatusBadRequest, errBody(err))
+		return
+	}
+	if b.AmountKobo <= 0 {
+		writeJSON(w, http.StatusBadRequest,
+			errBody(errors.New("say how much to add, in kobo")))
+		return
+	}
+	ref := strings.TrimSpace(b.Reference)
+	if ref == "" {
+		ref = "float-" + uuid.NewString()
+	}
+
+	acct, err := a.Fintava.GenerateFundingAccount(
+		r.Context(), money.Kobo(b.AmountKobo), ref, b.ExpiresInMin)
+	switch {
+	case errors.Is(err, fintava.ErrNotConfigured):
+		writeJSON(w, http.StatusServiceUnavailable,
+			errBody(errors.New("the bank rail is not configured on this deployment")))
+		return
+	case err != nil:
+		slog.Error("float funding account failed", "err", err)
+		writeJSON(w, http.StatusBadGateway,
+			errBody(errors.New("could not get a funding account from the bank")))
+		return
+	}
+	writeJSON(w, http.StatusOK, acct)
 }
 
 // ---------------------------------------------------------------- webhook
