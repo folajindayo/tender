@@ -65,6 +65,11 @@ services:
       # ---- non-secret configuration ----
       - key: PORT
         value: "8080"
+      # Demo only: pay the recipient on recognition alone, no counterparty and no
+      # handover. The float carries every transfer and no cash is collected.
+      # Delete this to restore matching; nothing else changes.
+      - key: DEMO_INSTANT_SETTLE
+        value: "true"
       - key: VISION_MODE
         value: claude
       - key: VISION_MODEL

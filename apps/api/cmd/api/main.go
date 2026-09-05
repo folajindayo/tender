@@ -69,6 +69,14 @@ func main() {
 	// The sweeper is what makes an abandoned handover cost nobody anything.
 	go svc.RunSweeper(ctx, cfg.SweepInterval)
 
+	// Say this at boot, every boot. A deployment that pays out without a
+	// handover is one nobody should discover by reading the ledger later.
+	if cfg.DemoInstantSettle {
+		slog.Warn("DEMO_INSTANT_SETTLE is on: recipients are paid on recognition " +
+			"alone, with no counterparty and no handover. The float carries every " +
+			"transfer and no cash is collected. Never run this holding real money.")
+	}
+
 	// Payouts are pushed and reconciled on their own clock, so a settlement is
 	// never blocked on the bank rail being reachable at that instant.
 	if bank.CanPayOut() {

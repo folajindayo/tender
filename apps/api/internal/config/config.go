@@ -51,6 +51,16 @@ type Config struct {
 	// secret must never mean "no check".
 	OperatorToken string
 
+	// DemoInstantSettle pays the recipient the moment cash is recognised, with
+	// no counterparty and no handover.
+	//
+	// This suspends the property the whole design rests on -- that value only
+	// moves after cash physically moved -- so it is off unless somebody asks
+	// for it, and it announces itself at boot and on every transfer it makes.
+	// It exists to show the flow end to end before the demand side has any
+	// liquidity. Turning it off restores matching with no other change.
+	DemoInstantSettle bool
+
 	// How often unsent payouts are pushed, and how long a payout may sit in a
 	// non-final state before it is chased with the provider.
 	PayoutInterval   time.Duration
@@ -93,6 +103,7 @@ func Load() (Config, error) {
 		FintavaFloatPhone:    env("FINTAVA_FLOAT_PHONE", ""),
 		FintavaFloatEmail:    env("FINTAVA_FLOAT_EMAIL", ""),
 		OperatorToken:        env("OPERATOR_TOKEN", ""),
+		DemoInstantSettle:    os.Getenv("DEMO_INSTANT_SETTLE") == "true",
 		PayoutInterval:       envDuration("PAYOUT_INTERVAL", 30*time.Second),
 		PayoutStaleAfter:     envDuration("PAYOUT_STALE_AFTER", 2*time.Minute),
 	}

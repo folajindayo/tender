@@ -153,7 +153,23 @@ func (s *Service) Pledge(ctx context.Context, req PledgeRequest) (*PledgeResult,
 
 	fee := money.FeeFor(req.Amount, s.Cfg.FeeBPS)
 	mode, expiry := domain.ModeEscrow, time.Now().Add(s.Cfg.MatchTTL)
-	if s.creditEligible(ctx, tx, sender, req.Amount) {
+	switch {
+	case s.creditEligible(ctx, tx, sender, req.Amount):
+		mode, expiry = domain.ModeCredit, time.Now().Add(s.Cfg.CreditTTL)
+
+	// Demo mode: settle on recognition alone, with no counterparty and no
+	// handover. It reuses the Tier 1 path rather than inventing a second way
+	// for money to leave, so the funds still come from the float, the sender
+	// still carries the obligation, and the books still balance. The only thing
+	// removed is the requirement that the sender earned the privilege.
+	//
+	// Still bounded by the float: nothing may promise more than the bank is
+	// actually holding, demo or not. An amount the float cannot cover falls
+	// back to ordinary escrow and waits for a counterparty, which is also what
+	// happens to every transfer the moment this flag goes off.
+	case s.Cfg.DemoInstantSettle && s.floatCovers(ctx, tx, req.Amount):
+		slog.Warn("DEMO_INSTANT_SETTLE: paying out with no handover",
+			"sender", req.SenderID, "amountKobo", int64(req.Amount))
 		mode, expiry = domain.ModeCredit, time.Now().Add(s.Cfg.CreditTTL)
 	}
 
@@ -372,6 +388,17 @@ func (s *Service) creditEligible(ctx context.Context, q ledger.Querier, u *domai
 		return false
 	}
 
+	var float int64
+	if err := q.QueryRow(ctx,
+		`SELECT COALESCE(balance_kobo,0) FROM account_balances WHERE kind='float'`).Scan(&float); err != nil {
+		return false
+	}
+	return money.Kobo(float) >= amount
+}
+
+// floatCovers reports whether the platform is actually holding enough to front
+// this amount. Demo mode relaxes who may be paid early, never how much.
+func (s *Service) floatCovers(ctx context.Context, q ledger.Querier, amount money.Kobo) bool {
 	var float int64
 	if err := q.QueryRow(ctx,
 		`SELECT COALESCE(balance_kobo,0) FROM account_balances WHERE kind='float'`).Scan(&float); err != nil {
