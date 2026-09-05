@@ -102,6 +102,9 @@ func (a *API) Router() http.Handler {
 		r.Post("/accounts/resolve", a.resolveAccount)
 
 		r.Get("/venues", a.listVenues)
+		r.Post("/venues", a.registerVenue)
+		r.Post("/venues/{id}/verify", a.verifyVenue)
+		r.Post("/users/{id}/allocate", a.allocateToUser)
 		r.Get("/cashouts", a.listCashouts)
 		r.Post("/cashouts", a.createCashout)
 

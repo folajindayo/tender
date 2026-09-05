@@ -424,7 +424,12 @@ func (s *Service) TryMatch(ctx context.Context, transferID uuid.UUID) (*domain.M
 		  JOIN venues v ON v.id = c.venue_id
 		  LEFT JOIN account_balances ab ON ab.user_id = u.id AND ab.kind = 'available'
 		 WHERE c.state = 'open'
-		   AND c.user_id <> $1 AND c.user_id <> $2
+		   AND c.user_id <> $1
+		   -- $2 is null when the money is going to a bank account rather than to
+		   -- another Tender user. "c.user_id <> NULL" is NULL, not true, so
+		   -- writing it the obvious way made this clause reject every row and
+		   -- no bank transfer could ever be matched.
+		   AND ($2::uuid IS NULL OR c.user_id <> $2)
 		   AND $3 BETWEEN c.amount_kobo - c.tolerance_kobo AND c.amount_kobo + c.tolerance_kobo
 		   AND COALESCE(ab.balance_kobo,0) >= $3
 		   AND v.active AND v.verified

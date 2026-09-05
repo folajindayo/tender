@@ -366,6 +366,37 @@ expect "the reconciliation is its own line, not disguised as a funding" \
 expect "the books still balance" "$(curl -s "$OPAPI/v1/ledger/audit" | jq -r '.unbalancedTransactions')" "0"
 { kill "$OP_PID" && wait "$OP_PID"; } 2>/dev/null || true; OP_PID=""
 
+# ------------------------------------------------- bank recipients match
+bold "A transfer to a bank account can be matched"
+
+# Every matching test above sends to another Tender user, which is why this
+# survived: with a bank recipient the transfer's recipient_id is NULL, and the
+# candidate query said "c.user_id <> $2". In SQL that is NULL rather than true,
+# so the clause dropped every row and no bank transfer could ever be matched.
+# The sender simply waited forever for a counterparty that was always there.
+# Sized to what the counterparty can actually cover: the candidate query
+# requires them to hold the funds, and earlier tests have spent Chidi down.
+WANT=$(balance $CHIDI .availableKobo)
+post_cashout "$CHIDI" "$WANT"
+img 77 "$TMP/bank.jpg"
+BR=$(curl -sX POST "$API/v1/pledge" -F senderId=$ADA \
+      -F accountNumber=9034409271 -F sortCode=100004 \
+      -F "accountName=OLUMIDE SILAS OGUNDELE" -F bankName=OPAY \
+      -F amountKobo=$WANT -F photo=@"$TMP/bank.jpg")
+
+expect "the pledge is accepted"        "$(echo "$BR" | jq -r '.accepted')"        "true"
+expect "it goes to the bank account"   "$(echo "$BR" | jq -r '.transfer.bank.accountName')" "OLUMIDE SILAS OGUNDELE"
+expect "and it finds a counterparty"   "$(echo "$BR" | jq -r '.transfer.state')"  "matched"
+expect "with a handover code"          "$(echo "$BR" | jq -r '.transfer.match.handoverCode | length')" "6"
+expect "at a named venue"              "$(echo "$BR" | jq -r '.transfer.match.venueName != null')" "true"
+
+BT=$(echo "$BR" | jq -r '.transfer.id')
+expect "the counterparty's funds are locked" "$(balance $CHIDI .escrowKobo)" "$WANT"
+curl -sX POST "$API/v1/transfers/$BT/reject" -H 'Content-Type: application/json' \
+  -d "{\"userId\":\"$CHIDI\",\"reason\":\"e2e cleanup\"}" >/dev/null
+expect "and released when refused"           "$(balance $CHIDI .escrowKobo)" "0"
+expect "ledger still balanced"               "$(curl -s "$API/v1/ledger/audit" | jq -r '.unbalancedTransactions')" "0"
+
 bold "Result"
 if [ "$FAILED" = "0" ]; then
   printf '  \033[32mall checks passed\033[0m\n\n'

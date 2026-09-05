@@ -446,6 +446,35 @@ func FundFloatFromBank(ctx context.Context, q Querier, amount money.Kobo, refere
 	return err
 }
 
+// AllocateFromFloat moves platform capital into a user's spendable balance.
+//
+// This is how a counterparty is put in funds before there are customers paying
+// money in: the platform lends its own float to somebody willing to hand out
+// cash, so the demand side of the market can exist at all.
+//
+// It moves rather than mints, which is the point. The wallet at the bank backs
+// every claim in the books, so float going down by exactly what a balance goes
+// up by keeps the total backed. Crediting a user with Deposit instead would
+// draw on `external` and leave two claims against the same money.
+func AllocateFromFloat(ctx context.Context, q Querier, user uuid.UUID, amount money.Kobo, reference string) error {
+	if amount <= 0 {
+		return fmt.Errorf("ledger: an allocation must be positive")
+	}
+	flt, err := systemAccount(ctx, q, KindFloat)
+	if err != nil {
+		return err
+	}
+	avail, err := userAccount(ctx, q, user, KindAvailable)
+	if err != nil {
+		return err
+	}
+	_, err = Post(ctx, q, nil, []Entry{
+		{avail, amount, "float.allocated:" + reference},
+		{flt, -amount, "float.allocated_out:" + reference},
+	})
+	return err
+}
+
 // ReconcileFloat records money that is in the settlement wallet but not in the
 // books -- an opening balance carried in from before Tender existed, a bank fee
 // the provider took without telling us, a credit no webhook ever arrived for.
