@@ -287,6 +287,55 @@ type AuditLine struct {
 	CreatedAt string     `json:"createdAt"`
 }
 
+// FloatLine is one component of the float control balance: how much a given
+// kind of movement has contributed, and over how many entries.
+type FloatLine struct {
+	Reason  string     `json:"reason"`
+	Amount  money.Kobo `json:"amountKobo"`
+	Entries int        `json:"entries"`
+}
+
+// FloatBook is the subsidiary detail behind the float control account.
+//
+// The control balance is a view over these same entries, so the two agree by
+// construction rather than by luck -- this is not a check that can fail, and is
+// not presented as one. What the detail is for is explaining the control
+// figure, so that a difference against the bank can be attributed to a movement
+// rather than merely observed.
+type FloatBook struct {
+	Lines   []FloatLine `json:"lines"`
+	Total   money.Kobo  `json:"totalKobo"`
+	Entries int         `json:"entries"`
+}
+
+// FloatDetail returns every movement through the float account, grouped by the
+// reason it was recorded under, largest absolute first.
+func (s *Store) FloatDetail(ctx context.Context) (*FloatBook, error) {
+	rows, err := s.Pool.Query(ctx, `
+		SELECT e.reason, SUM(e.amount_kobo)::bigint, COUNT(*)::int
+		  FROM ledger_entries e
+		  JOIN accounts a ON a.id = e.account_id
+		 WHERE a.kind = 'float'
+		 GROUP BY e.reason
+		 ORDER BY ABS(SUM(e.amount_kobo)) DESC, e.reason`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	book := &FloatBook{Lines: []FloatLine{}}
+	for rows.Next() {
+		var l FloatLine
+		if err := rows.Scan(&l.Reason, &l.Amount, &l.Entries); err != nil {
+			return nil, err
+		}
+		book.Lines = append(book.Lines, l)
+		book.Total += l.Amount
+		book.Entries += l.Entries
+	}
+	return book, rows.Err()
+}
+
 type Audit struct {
 	Lines        []AuditLine `json:"lines"`
 	GlobalSum    money.Kobo  `json:"globalSumKobo"`

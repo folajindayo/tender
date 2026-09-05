@@ -295,6 +295,35 @@ expect "the other session survives" \
 expect "the user directory is not published" \
   "$(curl -s -o /dev/null -w '%{http_code}' "$API/v1/users")" "405"
 
+# ---------------------------------------------------------------- float
+bold "The float reconciles three ways"
+
+F=$(curl -s "$API/v1/float")
+GL=$(echo "$F" | jq -r '.gl.controlKobo')
+SL=$(echo "$F" | jq -r '.sl.totalKobo')
+
+expect "the subsidiary detail sums to the control account" "$SL" "$GL"
+expect "and says so"                                       "$(echo "$F" | jq -r '.sl.tiesToControl')" "true"
+
+# The detail must actually be itemised, or "it ties" is a statement about one
+# number agreeing with itself.
+[ "$(echo "$F" | jq -r '.sl.lines | length')" -gt 0 ] \
+  && pass "the control balance is itemised by movement" \
+  || fail "the control balance is itemised by movement"
+
+# Every movement through the float names why it happened. An unattributed entry
+# is exactly what a reconciliation exists to surface.
+expect "every float movement has a reason" \
+  "$(echo "$F" | jq -r '[.sl.lines[] | select(.reason == "" or .reason == null)] | length')" "0"
+
+# No bank key in the test environment, so the third leg is honestly absent
+# rather than reported as a zero balance -- "we could not ask" is not "no float".
+expect "the bank leg reports itself unavailable" \
+  "$(echo "$F" | jq -r '.bank.available')" "false"
+expect "and the float is therefore not reconciled" \
+  "$(echo "$F" | jq -r '.reconciled')" "false"
+expect "no bank balance is invented"  "$(echo "$F" | jq -r '.bank.balanceKobo // "absent"')" "absent"
+
 bold "Result"
 if [ "$FAILED" = "0" ]; then
   printf '  \033[32mall checks passed\033[0m\n\n'

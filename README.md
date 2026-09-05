@@ -140,6 +140,41 @@ ERROR:  unbalanced ledger transaction 1ff2c35d…: entries sum to -1 kobo, must 
 
 `GET /v1/ledger/audit` exposes the books, including capital currently at risk.
 
+### The float, reconciled three ways
+
+Every bank payout debits a wallet held at Fintava. That wallet is the real
+constraint on settlement: a transfer can be valid, escrowed and handed over and
+still fail to pay out because the float is empty.
+
+`GET /v1/float` reports it three ways.
+
+| | |
+|---|---|
+| **GL** | the `float` control account, a system account in the double-entry ledger |
+| **SL** | the entries composing it, grouped by the reason each was recorded under |
+| **BANK** | what Fintava will actually let Tender pay out |
+
+GL and SL are **not** an independent check, and are not presented as one. The
+control balance is a database view over the very entries the detail sums, so
+they agree by construction. The detail earns its place by explaining the control
+figure — a float of ₦500,000 reads as a funding movement, a credit extended, and
+a repayment that restored it — so a difference against the bank can be
+attributed to a movement rather than merely noticed.
+
+The check that can fail is **GL against BANK**. A gap means money moved on the
+rail that the books never recorded, and seeing it here is better than
+discovering it when a payout fails.
+
+A balance that cannot be read is an error, never a zero: answering "no float"
+when the truth is "we could not ask" would be the wrong answer to the only
+question the endpoint exists to settle. When the rail is unreachable the books
+are still returned, and the bank leg says it is absent.
+
+`POST /v1/float/fund` issues a one-time account that tops the float up. Fintava's
+virtual wallets are single-use and amount-specific, which is worth keeping
+rather than working around: an account that only accepts the amount it was
+issued for cannot quietly absorb a payment nobody is expecting.
+
 ### Accounts and sessions
 
 Sign-up is an email address and a password, hashed with bcrypt. There is no email
@@ -263,6 +298,8 @@ PWA first when it removes something the old PWA still calls.
 | `GET /v1/users/{id}` | one account and its balances |
 | `GET /v1/users/{id}/transfers` | activity |
 | `GET /v1/banks` | the bank directory a recipient account can belong to |
+| `GET /v1/float` | settlement capital: GL control, SL detail, and the bank balance |
+| `POST /v1/float/fund` | a one-time account to top the float up |
 | `POST /v1/accounts/resolve` | name enquiry: account number → the name the bank holds |
 | `POST /v1/pledge` | photograph cash (multipart `photo`, or base64 JSON) |
 | `POST /v1/transfers/{id}/match` | look for a counterparty again |

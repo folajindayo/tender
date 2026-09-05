@@ -200,43 +200,77 @@ func clientIP(r *http.Request) string {
 
 // ---------------------------------------------------------------- float
 
-// floatStatus reports Tender's settlement capital.
+// floatStatus reconciles Tender's settlement capital three ways.
 //
-// It answers two questions at once, because either alone is misleading. The
-// ledger figure is what Tender's books believe it holds; the Fintava figure is
-// what the bank rail will actually let it pay out. A settlement is limited by
-// the second, and a difference between them means money moved somewhere the
-// books have not recorded -- worth seeing before it is discovered by a payout
-// failing.
+//	GL    the float control account
+//	SL    the movements that compose it, by reason
+//	BANK  what Fintava will actually let Tender pay out
+//
+// GL and SL are not an independent check and are not offered as one: the
+// control balance is a database view over the very entries the detail sums, so
+// they agree by construction. Saying otherwise would be inventing assurance.
+// The detail earns its place by explaining the control figure, so a difference
+// can be attributed rather than merely noticed.
+//
+// The check that can fail is GL against BANK. Only the bank figure limits a
+// settlement, and a gap means money moved on the rail that the books never
+// recorded -- better seen here than discovered by a payout failing.
 func (a *API) floatStatus(w http.ResponseWriter, r *http.Request) {
 	audit, err := a.Store.LedgerAudit(r.Context(), 1)
 	if err != nil {
 		fail(w, err)
 		return
 	}
+	book, err := a.Store.FloatDetail(r.Context())
+	if err != nil {
+		fail(w, err)
+		return
+	}
 
-	out := fintava.Float{Ledger: audit.FloatKobo, Currency: "NGN"}
+	out := map[string]any{
+		"currency": "NGN",
+		"gl": map[string]any{
+			"account":     "float",
+			"controlKobo": audit.FloatKobo,
+		},
+		"sl": map[string]any{
+			"lines":     book.Lines,
+			"totalKobo": book.Total,
+			"entries":   book.Entries,
+			// True by construction, reported so the invariant is visible rather
+			// than assumed. A false here would mean the view and the entries
+			// have diverged, which should be impossible.
+			"tiesToControl": book.Total == audit.FloatKobo,
+		},
+	}
 
 	balance, err := a.Fintava.MerchantBalance(r.Context())
 	switch {
 	case errors.Is(err, fintava.ErrNotConfigured):
-		writeJSON(w, http.StatusServiceUnavailable,
-			errBody(errors.New("the bank rail is not configured on this deployment")))
+		out["bank"] = map[string]any{"available": false,
+			"reason": "the bank rail is not configured on this deployment"}
+		out["reconciled"] = false
+		writeJSON(w, http.StatusOK, out)
 		return
 	case err != nil:
-		// The books are still worth returning: knowing what Tender thinks it
-		// holds is useful even when the rail cannot be reached to confirm it.
+		// The books are still worth returning: what Tender believes it holds is
+		// useful even when the rail cannot be reached to confirm it.
 		slog.Error("merchant balance failed", "err", err)
-		writeJSON(w, http.StatusOK, map[string]any{
-			"ledgerKobo": out.Ledger,
-			"currency":   out.Currency,
-			"error":      "could not read the balance held at the bank",
-		})
+		out["bank"] = map[string]any{"available": false,
+			"reason": "could not read the balance held at the bank"}
+		out["reconciled"] = false
+		writeJSON(w, http.StatusOK, out)
 		return
 	}
 
-	out.Balance = balance
-	out.Drift = balance - out.Ledger
+	drift := balance - audit.FloatKobo
+	out["bank"] = map[string]any{
+		"available":   true,
+		"source":      "fintava",
+		"balanceKobo": balance,
+	}
+	out["driftKobo"] = drift
+	out["reconciled"] = drift == 0 && book.Total == audit.FloatKobo
 	writeJSON(w, http.StatusOK, out)
 }
 
