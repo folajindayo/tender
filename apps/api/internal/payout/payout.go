@@ -161,8 +161,19 @@ func (s *Service) Submit(ctx context.Context, id uuid.UUID) error {
 		slog.Error("payout outcome unknown", "payout", r.id, "transfer", r.transferID, "err", err)
 		return s.mark(ctx, r.id, StateUnknown, err.Error(), "", "")
 
+	case errors.Is(err, fintava.ErrTemporary):
+		// The provider refused for a reason that will stop being true -- an
+		// empty float, a rate limit, their side down. No money moved, and none
+		// should move back: returning it would cancel a transfer that is going
+		// to go out perfectly well as soon as the wallet is topped up. Back to
+		// pending, with the reason visible, and the ticker will try again.
+		slog.Warn("payout deferred, will retry", "payout", r.id, "err", err)
+		return s.mark(ctx, r.id, StatePending, err.Error(), "", "")
+
 	case err != nil:
-		// The provider answered and refused, so no money moved.
+		// The provider answered and refused on the merits -- a wrong account
+		// number, a closed account. Waiting cannot fix that, so the money goes
+		// back to the sender.
 		slog.Warn("payout rejected", "payout", r.id, "err", err)
 		return s.fail(ctx, r, err.Error())
 

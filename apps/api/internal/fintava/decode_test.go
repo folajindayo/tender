@@ -125,3 +125,43 @@ func TestAuthRejectionIsRecognisedDespiteTheStatus(t *testing.T) {
 		}
 	}
 }
+
+// Whether a payout dies or waits turns on this. The live case: the float was
+// short by a few naira, Fintava said "Account balance is insufficient", and the
+// payout was marked failed and the money returned -- cancelling a transfer that
+// a top-up would have completed.
+func TestTemporaryRefusalsAreToldApartFromFinalOnes(t *testing.T) {
+	temporary := []struct {
+		status int
+		body   string
+	}{
+		{400, `{"status":400,"message":["Account balance is insufficient"],"path":"/api/dev/bank/credit/merchant"}`},
+		{429, `{"message":"Too Many Requests"}`},
+		{500, `{"message":"internal"}`},
+		{503, `{"message":"Service Unavailable"}`},
+		{400, `{"message":["Please try again later"]}`},
+	}
+	for _, tc := range temporary {
+		if !isTemporary(tc.status, []byte(tc.body)) {
+			t.Errorf("http %d %s: should wait and retry, not fail the payout", tc.status, tc.body)
+		}
+	}
+
+	// A refusal about the account itself is final. Retrying it forever would
+	// leave the sender's money in limbo instead of giving it back.
+	final := []struct {
+		status int
+		body   string
+	}{
+		{400, `{"message":["Invalid account number"]}`},
+		{400, `{"message":["Account does not exist"]}`},
+		{400, `{"message":["email must be an email"]}`},
+		{404, `{"message":["Account not found"]}`},
+	}
+	for _, tc := range final {
+		if isTemporary(tc.status, []byte(tc.body)) {
+			t.Errorf("http %d %s: waiting cannot fix this; the money should go back",
+				tc.status, tc.body)
+		}
+	}
+}

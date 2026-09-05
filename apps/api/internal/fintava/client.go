@@ -45,6 +45,16 @@ var (
 	// sent us looking at the wrong thing.
 	ErrUnauthorized = errors.New("fintava: credentials rejected")
 
+	// ErrTemporary means the provider refused for a reason that will stop being
+	// true: the wallet was short, we were rate limited, their side was down.
+	//
+	// The distinction decides whether a payout dies or waits. A refusal that
+	// names the account -- wrong number, closed, frozen -- is final, and the
+	// money belongs back with the sender. A refusal that names the moment is
+	// not, and treating it as final returns money that was going to go out
+	// perfectly well as soon as the float was topped up.
+	ErrTemporary = errors.New("fintava: temporarily unable")
+
 	// ErrUnreadable means the provider answered successfully but the body held
 	// no account name under any key we know. That is not the same as the
 	// account not existing, and collapsing the two would let a decoding bug
@@ -151,6 +161,28 @@ func truncate(s string, n int) string {
 	return s[:n] + "..."
 }
 
+// isTemporary spots a refusal that names the moment rather than the account.
+//
+// An insufficient wallet is the one that matters: it is the normal state of a
+// float that needs topping up, and it says nothing at all about whether the
+// payout should happen. Rate limits and the provider's own 5xx are the same
+// shape of answer -- ask again later.
+func isTemporary(status int, raw []byte) bool {
+	if status == http.StatusTooManyRequests || status >= 500 {
+		return true
+	}
+	lower := strings.ToLower(string(raw))
+	for _, s := range []string{
+		"insufficient", "balance is low", "try again", "temporarily",
+		"timeout", "timed out", "unavailable", "too many requests",
+	} {
+		if strings.Contains(lower, s) {
+			return true
+		}
+	}
+	return false
+}
+
 // isAuthRejection spots a refused credential. The status alone is not enough:
 // Fintava answers 404 with "Invalid API Key" rather than 401, so the body has to
 // be read to tell a rejected key from a genuinely missing route.
@@ -207,7 +239,13 @@ func (c *Client) do(ctx context.Context, method, path string, body any) (json.Ra
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		apiErr := &APIError{StatusCode: resp.StatusCode, Message: env.Message, Body: string(raw)}
 		if isAuthRejection(resp.StatusCode, raw) {
-			return nil, fmt.Errorf("%w: %s", ErrUnauthorized, apiErr)
+			// Wrapped as temporary too: today this key went from valid to
+			// "Invalid API Key" and back twice without anybody touching it, and
+			// killing a payout over that would return money that was fine.
+			return nil, fmt.Errorf("%w: %w: %s", ErrTemporary, ErrUnauthorized, apiErr)
+		}
+		if isTemporary(resp.StatusCode, raw) {
+			return nil, fmt.Errorf("%w: %s", ErrTemporary, apiErr)
 		}
 		return nil, apiErr
 	}
