@@ -248,6 +248,68 @@ input:focus, select:focus { border-color: var(--accent); }
 .meet .who { font-weight: 700; }
 .meet .where { color: var(--muted); font-size: 13px; margin-top: 2px; }
 
+/* -------------------------------------------------- confirmed destination */
+
+/*
+ * The name the bank returned for a typed account number.
+ *
+ * This is the last thing a sender reads before handing over physical cash, and
+ * the only check between a mistyped digit and giving money to a stranger. So it
+ * gets a full-width block of its own rather than a column in a row: the name is
+ * the largest text on the screen, the account it belongs to sits directly under
+ * it, and the warning is separated by a rule so it reads as a caution rather
+ * than as more detail about the account.
+ */
+.payee {
+  border-radius: 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--accent-dim);
+  overflow: hidden;
+}
+
+.payee-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  border-bottom: 1px solid var(--accent-dim);
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.payee-body { padding: 14px; }
+
+/* Names arrive from the bank in caps and can be long. Wrapping is fine; three
+   ragged lines because the box is a third of the screen wide is not. */
+.payee-name {
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+  overflow-wrap: break-word;
+}
+
+.payee-account {
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 13.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.payee-note {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.payee-note strong { color: var(--text); font-weight: 600; }
+
 /* ---------------------------------------------------------------- lists */
 
 .rows { display: flex; flex-direction: column; }

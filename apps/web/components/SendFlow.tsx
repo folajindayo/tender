@@ -302,14 +302,19 @@ function Destination({
       )}
 
       {account && !looking && (
-        <div className="meet">
-          <div className="who">{account.accountName}</div>
-          <div className="where">
-            {account.bankName ?? "Bank"} · {account.accountNumber}
+        <div className="payee">
+          <div className="payee-head">
+            <span aria-hidden="true">✓</span> Money goes to
           </div>
-          <div className="muted" style={{ marginTop: 8 }}>
-            Check this is the right person before you hand any cash over. Once the
-            handover is confirmed the money is gone.
+          <div className="payee-body">
+            <div className="payee-name">{account.accountName}</div>
+            <div className="payee-account">
+              {account.bankName ?? "Bank"} · {account.accountNumber}
+            </div>
+            <p className="payee-note">
+              <strong>Check this is the right person.</strong> Once you hand the cash
+              over, the money is gone.
+            </p>
           </div>
         </div>
       )}
