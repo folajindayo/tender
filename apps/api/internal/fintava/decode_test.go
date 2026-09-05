@@ -88,3 +88,40 @@ func TestPickKoboFindsNestedAmounts(t *testing.T) {
 		}
 	}
 }
+
+// Fintava answers a refused key with HTTP 404 and "Invalid API Key" rather than
+// a 401, so status alone cannot tell a rejected credential from a missing
+// route. Getting that wrong sent us hunting a network fault for half an hour.
+func TestAuthRejectionIsRecognisedDespiteTheStatus(t *testing.T) {
+	rejected := []struct {
+		status int
+		body   string
+	}{
+		{404, `{"status":404,"message":["Invalid API Key"],"path":"/api/dev/banks"}`},
+		{404, `{"message":["invalid api key"]}`},
+		{401, `{"message":"nope"}`},
+		{403, `{"message":"forbidden"}`},
+		{400, `{"message":"Unauthorized"}`},
+	}
+	for _, tc := range rejected {
+		if !isAuthRejection(tc.status, []byte(tc.body)) {
+			t.Errorf("http %d %s: should read as a refused credential", tc.status, tc.body)
+		}
+	}
+
+	// A real 404 must stay a 404: telling an operator to check a key that is
+	// fine is the same wrong turn in the other direction.
+	notAuth := []struct {
+		status int
+		body   string
+	}{
+		{404, `{"status":404,"message":["Account not found"]}`},
+		{400, `{"message":["email must be an email"]}`},
+		{500, `{"message":"internal error"}`},
+	}
+	for _, tc := range notAuth {
+		if isAuthRejection(tc.status, []byte(tc.body)) {
+			t.Errorf("http %d %s: should NOT read as a refused credential", tc.status, tc.body)
+		}
+	}
+}

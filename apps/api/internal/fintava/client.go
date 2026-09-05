@@ -37,6 +37,14 @@ import (
 const DefaultBaseURL = "https://dev.fintavapay.com/api/dev"
 
 var (
+	// ErrUnauthorized means the provider rejected the credentials.
+	//
+	// Kept apart from a transport failure because the remedy is different and
+	// the operator is the only one who can apply it. Fintava reports this as an
+	// HTTP 404 carrying "Invalid API Key", which read as a routing problem and
+	// sent us looking at the wrong thing.
+	ErrUnauthorized = errors.New("fintava: credentials rejected")
+
 	// ErrUnreadable means the provider answered successfully but the body held
 	// no account name under any key we know. That is not the same as the
 	// account not existing, and collapsing the two would let a decoding bug
@@ -88,6 +96,12 @@ func New(cfg Config) *Client {
 		cfg.BaseURL = DefaultBaseURL
 	}
 	cfg.BaseURL = strings.TrimRight(cfg.BaseURL, "/")
+	// Credentials arrive by being pasted into a dashboard, and a stray newline
+	// or space rides along invisibly. It would go out as "Bearer <key> " and
+	// come back as "Invalid API Key", which sends the operator to check a key
+	// that is in fact correct.
+	cfg.APIKey = strings.TrimSpace(cfg.APIKey)
+	cfg.SourceID = strings.TrimSpace(cfg.SourceID)
 	if cfg.Timeout == 0 {
 		// Long enough for a bank rail on a bad day, short enough that a stuck
 		// request does not hold a settlement transaction open indefinitely.
@@ -137,6 +151,19 @@ func truncate(s string, n int) string {
 	return s[:n] + "..."
 }
 
+// isAuthRejection spots a refused credential. The status alone is not enough:
+// Fintava answers 404 with "Invalid API Key" rather than 401, so the body has to
+// be read to tell a rejected key from a genuinely missing route.
+func isAuthRejection(status int, raw []byte) bool {
+	if status == http.StatusUnauthorized || status == http.StatusForbidden {
+		return true
+	}
+	lower := strings.ToLower(string(raw))
+	return strings.Contains(lower, "invalid api key") ||
+		strings.Contains(lower, "unauthorized") ||
+		strings.Contains(lower, "invalid token")
+}
+
 func (c *Client) do(ctx context.Context, method, path string, body any) (json.RawMessage, error) {
 	if !c.Configured() {
 		return nil, ErrNotConfigured
@@ -178,7 +205,11 @@ func (c *Client) do(ctx context.Context, method, path string, body any) (json.Ra
 	_ = json.Unmarshal(raw, &env)
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, &APIError{StatusCode: resp.StatusCode, Message: env.Message, Body: string(raw)}
+		apiErr := &APIError{StatusCode: resp.StatusCode, Message: env.Message, Body: string(raw)}
+		if isAuthRejection(resp.StatusCode, raw) {
+			return nil, fmt.Errorf("%w: %s", ErrUnauthorized, apiErr)
+		}
+		return nil, apiErr
 	}
 	if env.Data == nil {
 		// Some endpoints return the payload at the top level rather than under

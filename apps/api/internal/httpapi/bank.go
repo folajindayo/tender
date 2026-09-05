@@ -34,6 +34,11 @@ func (a *API) listBanks(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusServiceUnavailable,
 			errBody(errors.New("bank transfers are not configured on this deployment")))
 		return
+	case errors.Is(err, fintava.ErrUnauthorized):
+		slog.Error("bank list rejected", "err", err)
+		writeJSON(w, http.StatusBadGateway,
+			errBody(errors.New("the bank rejected our credentials; FINTAVA_API_KEY needs attention")))
+		return
 	case err != nil:
 		slog.Error("bank list failed", "err", err)
 		writeJSON(w, http.StatusBadGateway, errBody(errors.New("could not reach the bank directory")))
@@ -125,6 +130,11 @@ func (a *API) resolveAccount(w http.ResponseWriter, r *http.Request) {
 		slog.Error("name enquiry answered in an unrecognised shape", "sortCode", b.SortCode)
 		writeJSON(w, http.StatusBadGateway,
 			errBody(errors.New("the bank replied but we could not read the account name; this is our problem, not yours")))
+		return
+	case errors.Is(err, fintava.ErrUnauthorized):
+		slog.Error("name enquiry rejected", "err", err)
+		writeJSON(w, http.StatusBadGateway,
+			errBody(errors.New("the bank rejected our credentials; FINTAVA_API_KEY needs attention")))
 		return
 	case err != nil:
 		slog.Error("name enquiry failed", "err", err)
@@ -256,8 +266,11 @@ func (a *API) floatStatus(w http.ResponseWriter, r *http.Request) {
 		// The books are still worth returning: what Tender believes it holds is
 		// useful even when the rail cannot be reached to confirm it.
 		slog.Error("merchant balance failed", "err", err)
-		out["bank"] = map[string]any{"available": false,
-			"reason": "could not read the balance held at the bank"}
+		reason := "could not read the balance held at the bank"
+		if errors.Is(err, fintava.ErrUnauthorized) {
+			reason = "the bank rejected our credentials; FINTAVA_API_KEY needs attention"
+		}
+		out["bank"] = map[string]any{"available": false, "reason": reason}
 		out["reconciled"] = false
 		writeJSON(w, http.StatusOK, out)
 		return
@@ -306,6 +319,11 @@ func (a *API) fundFloat(w http.ResponseWriter, r *http.Request) {
 		// Carry the client's own wording through: it names the missing setting,
 		// which a generic "not configured" would throw away.
 		writeJSON(w, http.StatusServiceUnavailable, errBody(err))
+		return
+	case errors.Is(err, fintava.ErrUnauthorized):
+		slog.Error("float funding rejected", "err", err)
+		writeJSON(w, http.StatusBadGateway,
+			errBody(errors.New("the bank rejected our credentials; FINTAVA_API_KEY needs attention")))
 		return
 	case err != nil:
 		slog.Error("float funding account failed", "err", err)
