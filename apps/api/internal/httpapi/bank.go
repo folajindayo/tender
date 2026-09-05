@@ -303,8 +303,9 @@ func (a *API) fundFloat(w http.ResponseWriter, r *http.Request) {
 		r.Context(), money.Kobo(b.AmountKobo), ref, b.ExpiresInMin)
 	switch {
 	case errors.Is(err, fintava.ErrNotConfigured):
-		writeJSON(w, http.StatusServiceUnavailable,
-			errBody(errors.New("the bank rail is not configured on this deployment")))
+		// Carry the client's own wording through: it names the missing setting,
+		// which a generic "not configured" would throw away.
+		writeJSON(w, http.StatusServiceUnavailable, errBody(err))
 		return
 	case err != nil:
 		slog.Error("float funding account failed", "err", err)

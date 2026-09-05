@@ -47,6 +47,12 @@ services:
       # Verifies inbound webhooks. Events are rejected without it.
       - key: FINTAVA_WEBHOOK_SECRET
         sync: false
+      # Contact details attached to a float top-up account. Fintava requires and
+      # validates both. These identify Tender's own float, not any user.
+      - key: FINTAVA_FLOAT_EMAIL
+        sync: false
+      - key: FINTAVA_FLOAT_PHONE
+        sync: false
 
       # The origin the PWA is served from, for CORS.
       - key: CORS_ORIGIN

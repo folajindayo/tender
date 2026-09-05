@@ -338,6 +338,15 @@ func (c *Client) GenerateFundingAccount(ctx context.Context, amount money.Kobo, 
 	if amount <= 0 {
 		return FundingAccount{}, errors.New("fintava: funding amount must be positive")
 	}
+	// Fintava requires a contact on a virtual wallet and validates the address.
+	// Sending an empty one earns "email must be an email", which says nothing
+	// about the setting that is actually missing -- so check it here, where the
+	// message can name it.
+	if strings.TrimSpace(c.cfg.FloatEmail) == "" || strings.TrimSpace(c.cfg.FloatPhone) == "" {
+		return FundingAccount{}, fmt.Errorf(
+			"%w: set FINTAVA_FLOAT_EMAIL and FINTAVA_FLOAT_PHONE to the contact "+
+				"details for Tender's own float", ErrNotConfigured)
+	}
 	if expireMin <= 0 {
 		expireMin = 60
 	}
