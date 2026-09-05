@@ -46,6 +46,11 @@ type Config struct {
 	FintavaFloatPhone    string
 	FintavaFloatEmail    string
 
+	// OperatorToken guards the endpoints that write to the books by hand.
+	// Empty disables them outright rather than leaving them open: an unset
+	// secret must never mean "no check".
+	OperatorToken string
+
 	// How often unsent payouts are pushed, and how long a payout may sit in a
 	// non-final state before it is chased with the provider.
 	PayoutInterval   time.Duration
@@ -87,6 +92,7 @@ func Load() (Config, error) {
 		FintavaWebhookSecret: env("FINTAVA_WEBHOOK_SECRET", ""),
 		FintavaFloatPhone:    env("FINTAVA_FLOAT_PHONE", ""),
 		FintavaFloatEmail:    env("FINTAVA_FLOAT_EMAIL", ""),
+		OperatorToken:        env("OPERATOR_TOKEN", ""),
 		PayoutInterval:       envDuration("PAYOUT_INTERVAL", 30*time.Second),
 		PayoutStaleAfter:     envDuration("PAYOUT_STALE_AFTER", 2*time.Minute),
 	}

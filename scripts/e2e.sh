@@ -15,7 +15,7 @@ TMP="$(mktemp -d)"
 FAILED=0
 
 cleanup() {
-  for pid in "${API_PID:-}" "${FAST_PID:-}"; do
+  for pid in "${API_PID:-}" "${FAST_PID:-}" "${OP_PID:-}"; do
     [ -n "$pid" ] || continue
     kill "$pid" 2>/dev/null || true
     wait "$pid" 2>/dev/null || true
@@ -323,6 +323,48 @@ expect "the bank leg reports itself unavailable" \
 expect "and the float is therefore not reconciled" \
   "$(echo "$F" | jq -r '.reconciled')" "false"
 expect "no bank balance is invented"  "$(echo "$F" | jq -r '.bank.balanceKobo // "absent"')" "absent"
+
+# ---------------------------------------------------- float reconciliation
+bold "Reconciling the float is guarded and idempotent"
+
+# The test instance runs without OPERATOR_TOKEN, so the endpoint that mints
+# float must be shut, not open. A forgotten secret meaning "no check required"
+# is the failure worth pinning.
+expect "an unset operator token closes the endpoint" \
+  "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$API/v1/float/reconcile" \
+       -H 'Content-Type: application/json' -d '{"amountKobo":1925,"reference":"probe"}')" "401"
+expect "and guessing a token does not open it" \
+  "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$API/v1/float/reconcile" \
+       -H 'Authorization: Bearer guess' -H 'Content-Type: application/json' \
+       -d '{"amountKobo":1925,"reference":"probe"}')" "401"
+expect "no float was minted"  "$(curl -s "$API/v1/float" | jq -r '[.sl.lines[] | select(.reason | startswith("float.reconciled"))] | length')" "0"
+
+# A third instance, with an operator token set, so the guarded path is exercised
+# without ever opening it on the instance the rest of the suite talks to.
+OP="e2e-operator-token"
+OP_PORT=$((PORT + 2))
+OPAPI="http://localhost:$OP_PORT"
+DATABASE_URL="$DB" PORT="$OP_PORT" VISION_MODE=stub ENFORCE_VENUE_HOURS=false \
+  OPERATOR_TOKEN="$OP" "$TMP/api" > "$TMP/op.log" 2>&1 &
+OP_PID=$!
+for _ in $(seq 1 40); do curl -sf "$OPAPI/health" >/dev/null 2>&1 && break; sleep 0.5; done
+
+R=$(curl -s -X POST "$OPAPI/v1/float/reconcile" -H "Authorization: Bearer $OP" \
+      -H 'Content-Type: application/json' \
+      -d '{"amountKobo":1925,"reference":"e2e-opening","note":"opening balance"}')
+expect "a correct token posts the entry"  "$(echo "$R" | jq -r '.posted')" "true"
+
+BEFORE=$(echo "$R" | jq -r '.glKobo')
+R2=$(curl -s -X POST "$OPAPI/v1/float/reconcile" -H "Authorization: Bearer $OP" \
+       -H 'Content-Type: application/json' \
+       -d '{"amountKobo":1925,"reference":"e2e-opening","note":"opening balance"}')
+expect "the same reference does not post twice" "$(echo "$R2" | jq -r '.posted')"      "false"
+expect "and the control balance is unmoved"    "$(echo "$R2" | jq -r '.glKobo')"       "$BEFORE"
+
+expect "the reconciliation is its own line, not disguised as a funding" \
+  "$(curl -s "$OPAPI/v1/float" | jq -r '[.sl.lines[] | select(.reason == "float.reconciled:e2e-opening")] | length')" "1"
+expect "the books still balance" "$(curl -s "$OPAPI/v1/ledger/audit" | jq -r '.unbalancedTransactions')" "0"
+{ kill "$OP_PID" && wait "$OP_PID"; } 2>/dev/null || true; OP_PID=""
 
 bold "Result"
 if [ "$FAILED" = "0" ]; then

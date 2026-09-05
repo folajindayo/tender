@@ -53,6 +53,10 @@ services:
         sync: false
       - key: FINTAVA_FLOAT_PHONE
         sync: false
+      # Guards the endpoints that write to the books by hand. Unset disables
+      # them outright: a forgotten secret must never mean "no check".
+      - key: OPERATOR_TOKEN
+        sync: false
 
       # The origin the PWA is served from, for CORS.
       - key: CORS_ORIGIN

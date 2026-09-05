@@ -170,6 +170,21 @@ when the truth is "we could not ask" would be the wrong answer to the only
 question the endpoint exists to settle. When the rail is unreachable the books
 are still returned, and the bank leg says it is absent.
 
+`GET /v1/float/statement` reads the bank's own record of what moved through the
+wallet. A drift figure says the books and the bank disagree; the statement says
+what the bank thinks happened, which is what turns a number to be explained into
+a line to be matched — including the fees a provider takes without announcing
+them, which are otherwise indistinguishable from money going missing.
+
+`POST /v1/float/reconcile` records money that is in the wallet but not in the
+books: an opening balance from before Tender existed, a fee, a credit no webhook
+arrived for. It posts the same double entry as a funding — float against
+external — but under its own reason, so a reader can tell a movement Tender
+observed from one a human asserted. It mints float, so it is operator-only and
+idempotent on reference; running the same reference twice is a no-op rather than
+a second helping of money. A negative amount records the opposite, which is what
+a bank fee looks like.
+
 `POST /v1/float/fund` issues a one-time account that tops the float up. Fintava's
 virtual wallets are single-use and amount-specific, which is worth keeping
 rather than working around: an account that only accepts the amount it was
@@ -300,6 +315,8 @@ PWA first when it removes something the old PWA still calls.
 | `GET /v1/banks` | the bank directory a recipient account can belong to |
 | `GET /v1/float` | settlement capital: GL control, SL detail, and the bank balance |
 | `POST /v1/float/fund` | a one-time account to top the float up |
+| `GET /v1/float/statement` | the bank's own record of what moved through the wallet |
+| `POST /v1/float/reconcile` | record money in the wallet the books never saw (operator-only) |
 | `POST /v1/accounts/resolve` | name enquiry: account number → the name the bank holds |
 | `POST /v1/pledge` | photograph cash (multipart `photo`, or base64 JSON) |
 | `POST /v1/transfers/{id}/match` | look for a counterparty again |

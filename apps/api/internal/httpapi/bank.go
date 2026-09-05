@@ -2,11 +2,13 @@ package httpapi
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -332,6 +334,110 @@ func (a *API) fundFloat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, acct)
+}
+
+// ---------------------------------------------------------- reconciliation
+
+// operatorOnly guards the endpoints that write to the books by hand.
+//
+// An unset token disables the endpoint rather than opening it. The alternative
+// -- treating "no token configured" as "no check required" -- turns a
+// forgotten environment variable into an open endpoint that mints float.
+func (a *API) operatorOnly(r *http.Request) error {
+	want := strings.TrimSpace(a.Cfg.OperatorToken)
+	if want == "" {
+		return errors.New("operator endpoints are disabled: OPERATOR_TOKEN is not set")
+	}
+	got := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
+	if subtle.ConstantTimeCompare([]byte(got), []byte(want)) != 1 {
+		return errors.New("not authorised")
+	}
+	return nil
+}
+
+// reconcileFloat records money that is in the wallet but not in the books.
+//
+// This mints float, so it is operator-only and idempotent on reference. The
+// reference is the operator's assertion of what is being recorded, and running
+// the same one twice is a no-op rather than a second helping of money.
+func (a *API) reconcileFloat(w http.ResponseWriter, r *http.Request) {
+	if err := a.operatorOnly(r); err != nil {
+		writeJSON(w, http.StatusUnauthorized, errBody(err))
+		return
+	}
+
+	var b struct {
+		AmountKobo int64  `json:"amountKobo"`
+		Reference  string `json:"reference"`
+		Note       string `json:"note"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 4<<10)).Decode(&b); err != nil {
+		writeJSON(w, http.StatusBadRequest, errBody(err))
+		return
+	}
+	ref := strings.TrimSpace(b.Reference)
+	if ref == "" {
+		writeJSON(w, http.StatusBadRequest,
+			errBody(errors.New("a reference is required: it is what makes this safe to run twice")))
+		return
+	}
+	if b.AmountKobo == 0 {
+		writeJSON(w, http.StatusBadRequest,
+			errBody(errors.New("a zero reconciliation is not a movement")))
+		return
+	}
+
+	posted, err := ledger.ReconcileFloat(
+		r.Context(), a.Store.Pool, money.Kobo(b.AmountKobo), ref, strings.TrimSpace(b.Note))
+	if err != nil {
+		fail(w, err)
+		return
+	}
+
+	audit, err := a.Store.LedgerAudit(r.Context(), 1)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"posted":      posted,
+		"alreadyDone": !posted,
+		"reference":   ref,
+		"amountKobo":  b.AmountKobo,
+		"glKobo":      audit.FloatKobo,
+	})
+}
+
+// floatStatement is the bank's own record of what moved through the wallet.
+//
+// A drift figure says the books and the bank disagree; this says what the bank
+// thinks happened, which is what turns a number to be explained into a line to
+// be matched.
+func (a *API) floatStatement(w http.ResponseWriter, r *http.Request) {
+	entry := strings.ToUpper(strings.TrimSpace(r.URL.Query().Get("type")))
+	take := 20
+	if n, err := strconv.Atoi(r.URL.Query().Get("take")); err == nil && n > 0 && n <= 100 {
+		take = n
+	}
+
+	txns, err := a.Fintava.MerchantTransactions(r.Context(), entry, take)
+	switch {
+	case errors.Is(err, fintava.ErrNotConfigured):
+		writeJSON(w, http.StatusServiceUnavailable,
+			errBody(errors.New("the bank rail is not configured on this deployment")))
+		return
+	case errors.Is(err, fintava.ErrUnauthorized):
+		slog.Error("merchant statement rejected", "err", err)
+		writeJSON(w, http.StatusBadGateway,
+			errBody(errors.New("the bank rejected our credentials; FINTAVA_API_KEY needs attention")))
+		return
+	case err != nil:
+		slog.Error("merchant statement failed", "err", err)
+		writeJSON(w, http.StatusBadGateway,
+			errBody(errors.New("could not read the statement from the bank")))
+		return
+	}
+	writeJSON(w, http.StatusOK, txns)
 }
 
 // ---------------------------------------------------------------- webhook

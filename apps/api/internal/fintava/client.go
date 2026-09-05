@@ -423,6 +423,70 @@ func (c *Client) GenerateFundingAccount(ctx context.Context, amount money.Kobo, 
 	return acct, nil
 }
 
+// Transaction line as the merchant statement reports it.
+type StatementLine struct {
+	Reference string     `json:"reference"`
+	Amount    money.Kobo `json:"amountKobo"`
+	Entry     string     `json:"entry"`
+	Type      string     `json:"type,omitempty"`
+	Narration string     `json:"narration,omitempty"`
+	Status    string     `json:"status,omitempty"`
+	CreatedAt string     `json:"createdAt,omitempty"`
+}
+
+// MerchantTransactions reads what the bank believes moved through the wallet.
+//
+// A drift figure only says the books and the bank disagree. This is what turns
+// that into something that can be matched line by line -- including the fees a
+// provider takes without announcing them, which are otherwise indistinguishable
+// from money going missing.
+func (c *Client) MerchantTransactions(ctx context.Context, entry string, take int) ([]StatementLine, error) {
+	if take <= 0 {
+		take = 20
+	}
+	q := url.Values{
+		"page":  {"1"},
+		"take":  {strconv.Itoa(take)},
+		"order": {"DESC"},
+	}
+	if entry == "CREDIT" || entry == "DEBIT" {
+		q.Set("type", entry)
+	}
+	data, err := c.do(ctx, http.MethodGet, "/txn/merchant?"+q.Encode(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	// The rows may be the payload itself or sit under a wrapper, exactly as
+	// with every other response here.
+	var rows []map[string]any
+	if err := json.Unmarshal(data, &rows); err != nil {
+		var wrapped map[string]any
+		if err2 := json.Unmarshal(data, &wrapped); err2 != nil {
+			return nil, fmt.Errorf("decode merchant transactions: %w", err)
+		}
+		raw, _ := json.Marshal(wrapped["data"])
+		if err2 := json.Unmarshal(raw, &rows); err2 != nil {
+			slog.Warn("merchant statement in an unrecognised shape", "keys", shapeOf(wrapped))
+			return nil, ErrUnreadable
+		}
+	}
+
+	out := make([]StatementLine, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, StatementLine{
+			Reference: pickString(row, "reference", "TransRef", "tagapayTransRef", "id"),
+			Amount:    pickKobo(row, "amount"),
+			Entry:     pickString(row, "entry"),
+			Type:      pickString(row, "transType", "type"),
+			Narration: pickString(row, "narration", "description"),
+			Status:    pickString(row, "status"),
+			CreatedAt: pickString(row, "createdAt", "created_at"),
+		})
+	}
+	return out, nil
+}
+
 // ---------------------------------------------------------------- payout
 
 type BankCreditRequest struct {

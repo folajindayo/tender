@@ -446,6 +446,59 @@ func FundFloatFromBank(ctx context.Context, q Querier, amount money.Kobo, refere
 	return err
 }
 
+// ReconcileFloat records money that is in the settlement wallet but not in the
+// books -- an opening balance carried in from before Tender existed, a bank fee
+// the provider took without telling us, a credit no webhook ever arrived for.
+//
+// It is deliberately the same double entry as an ordinary funding: float
+// against external, because the money genuinely did come from outside the
+// system. What differs is the reason, which records that a human asserted this
+// rather than a webhook reporting it -- so a later reader can tell a
+// reconciliation from a movement Tender actually observed.
+//
+// A negative amount is allowed and means the opposite: the wallet holds less
+// than the books think, which is what a fee looks like.
+//
+// Idempotent on reference. Reconciliation is the one operation most likely to
+// be run twice by a nervous operator, and running it twice must not invent
+// money.
+func ReconcileFloat(ctx context.Context, q Querier, amount money.Kobo, reference, note string) (bool, error) {
+	if amount == 0 {
+		return false, fmt.Errorf("ledger: a zero reconciliation is not a movement")
+	}
+	reason := "float.reconciled:" + reference
+
+	var exists bool
+	if err := q.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM ledger_entries WHERE reason = $1)`, reason).Scan(&exists); err != nil {
+		return false, err
+	}
+	if exists {
+		return false, nil
+	}
+
+	flt, err := systemAccount(ctx, q, KindFloat)
+	if err != nil {
+		return false, err
+	}
+	ext, err := systemAccount(ctx, q, KindExternal)
+	if err != nil {
+		return false, err
+	}
+
+	counter := "float.reconciliation_source"
+	if note != "" {
+		counter += ":" + note
+	}
+	if _, err := Post(ctx, q, nil, []Entry{
+		{flt, amount, reason},
+		{ext, -amount, counter},
+	}); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // ExtendCreditToPayable is ExtendCredit for a bank recipient.
 //
 // The difference is only where the money lands: a Tender recipient is credited
