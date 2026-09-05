@@ -21,6 +21,31 @@ import (
 // model tier should be chosen by measurement -- see cmd/eval.
 const DefaultModel = "claude-haiku-4-5"
 
+// supportsEffort reports whether a model accepts output_config.effort.
+//
+// Sending it to a model that does not is a hard 400 -- "This model does not
+// support the effort parameter" -- which took the whole pledge path down,
+// because the default recognizer is Haiku 4.5 and Haiku 4.5 is one of the
+// models that rejects it.
+//
+// The list is an allowlist rather than a denylist so the failure is safe in
+// both directions. VISION_MODEL is operator-configurable, so an unrecognised
+// value is possible; omitting effort from a model that would have accepted it
+// costs a little token spend, while sending it to one that refuses stops
+// people pledging cash.
+func supportsEffort(model string) bool {
+	for _, prefix := range []string{
+		"claude-fable-5", "claude-mythos-5",
+		"claude-opus-5", "claude-opus-4-8", "claude-opus-4-7", "claude-opus-4-6",
+		"claude-sonnet-5", "claude-sonnet-4-6",
+	} {
+		if strings.HasPrefix(model, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
 // MaxSerials caps how many serial numbers we ask for.
 //
 // Serials are a bonus, not the replay guard: the perceptual hash already
@@ -111,12 +136,9 @@ func (c *Claude) Analyze(ctx context.Context, raw []byte, _ money.Kobo) (*Result
 		return nil, fmt.Errorf("not an image: %s", mediaType)
 	}
 
-	msg, err := c.client.Messages.New(ctx, anthropic.MessageNewParams{
+	params := anthropic.MessageNewParams{
 		Model:     anthropic.Model(c.model),
 		MaxTokens: 2048,
-		// Counting is perception, not deliberation. Low effort keeps the snap
-		// responsive, which matters more here than depth.
-		OutputConfig: anthropic.OutputConfigParam{Effort: anthropic.OutputConfigEffortLow},
 		System: []anthropic.TextBlockParam{
 			{Text: fmt.Sprintf(visionSystem, MaxSerials)},
 		},
@@ -126,7 +148,15 @@ func (c *Claude) Analyze(ctx context.Context, raw []byte, _ money.Kobo) (*Result
 				anthropic.NewTextBlock("Count the naira in this photograph and return the JSON object."),
 			),
 		},
-	})
+	}
+	// Counting is perception, not deliberation. Low effort keeps the snap
+	// responsive, which matters more here than depth -- but only where the
+	// model will accept being told.
+	if supportsEffort(c.model) {
+		params.OutputConfig = anthropic.OutputConfigParam{Effort: anthropic.OutputConfigEffortLow}
+	}
+
+	msg, err := c.client.Messages.New(ctx, params)
 	if err != nil {
 		// The call never produced a reading. Whether that is billing, a bad key
 		// or the network, the sender's photograph is not the problem.
