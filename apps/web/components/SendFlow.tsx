@@ -462,6 +462,27 @@ function PledgeOutcome({
   onRetry: () => void;
   onDone: (transferId: string) => void;
 }) {
+  // The recogniser being down is not a verdict on the photograph, so it does
+  // not get the refusal screen or an invitation to shoot it again.
+  if (result.code === "vision_unavailable") {
+    return (
+      <div className="stack">
+        <div className="banner warn">
+          <div>
+            <strong>We cannot count notes right now</strong>
+            {result.reason}
+          </div>
+        </div>
+        <div className="muted center">
+          Nothing was pledged and no cash is committed. Your money is where it was.
+        </div>
+        <button className="btn" onClick={onRetry}>
+          Try again
+        </button>
+      </div>
+    );
+  }
+
   if (!result.accepted) {
     const miscounted = result.code === "amount_mismatch" || result.code === "low_confidence";
     return (

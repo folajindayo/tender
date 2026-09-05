@@ -20,6 +20,7 @@ import (
 	"tender/api/internal/settle"
 	"tender/api/internal/store"
 	"tender/api/internal/stream"
+	"tender/api/internal/vision"
 )
 
 type API struct {
@@ -136,6 +137,19 @@ func fail(w http.ResponseWriter, err error) {
 	if errors.As(err, &rej) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{
 			"accepted": false, "code": rej.Code, "reason": rej.Reason,
+		})
+		return
+	}
+	// A recognizer that is not answering is not an internal fault the sender can
+	// retry past, so it does not get the generic "try again". The detail stays
+	// in the log; the sender is told the photograph is not what is wrong.
+	if errors.Is(err, vision.ErrUnavailable) {
+		slog.Error("vision unavailable", "err", err)
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+			"accepted": false,
+			"code":     "vision_unavailable",
+			"reason": "We cannot count notes right now -- the recogniser is unavailable. " +
+				"Your photo is fine; nothing has been pledged. Please try later.",
 		})
 		return
 	}

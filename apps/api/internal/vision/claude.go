@@ -128,7 +128,9 @@ func (c *Claude) Analyze(ctx context.Context, raw []byte, _ money.Kobo) (*Result
 		},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("vision (%s): %w", c.model, err)
+		// The call never produced a reading. Whether that is billing, a bad key
+		// or the network, the sender's photograph is not the problem.
+		return nil, fmt.Errorf("%w: %s: %w", ErrUnavailable, c.model, err)
 	}
 	if msg.StopReason == "refusal" {
 		return nil, fmt.Errorf("vision declined to read this image")
