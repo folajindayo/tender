@@ -406,45 +406,75 @@ func shapeOf(fields map[string]any) []string {
 	return out
 }
 
+// pickString finds the first of `keys` present anywhere in the response.
+//
+// It searches the whole object, not just a wrapper named "data". Name enquiry
+// returns {status, account:{accountName, ...}}, and a decoder that only ever
+// looked inside "data" reported every real account as missing. Which wrapper a
+// provider uses is not knowable from a reference that documents its responses
+// as empty objects, so the search does not depend on guessing one.
+//
+// The top level is searched first, then nested objects, so an outer field wins
+// over one buried in a sub-object.
 func pickString(fields map[string]any, keys ...string) string {
-	for _, k := range keys {
-		switch v := fields[k].(type) {
+	return search(fields, func(v any) (string, bool) {
+		switch t := v.(type) {
 		case string:
-			if s := strings.TrimSpace(v); s != "" {
-				return s
+			if s := strings.TrimSpace(t); s != "" {
+				return s, true
 			}
 		case float64:
-			return strconv.FormatFloat(v, 'f', -1, 64)
+			return strconv.FormatFloat(t, 'f', -1, 64), true
 		case json.Number:
-			return v.String()
+			return t.String(), true
+		}
+		return "", false
+	}, keys)
+}
+
+// search walks a decoded JSON object breadth-first, returning the first value
+// under any of `keys` that `take` accepts.
+func search[T any](fields map[string]any, take func(any) (T, bool), keys []string) T {
+	var zero T
+	queue := []map[string]any{fields}
+	// A response is a handful of small objects; the bound is only here so a
+	// pathological body cannot spin.
+	for depth := 0; len(queue) > 0 && depth < 64; depth++ {
+		level := queue
+		queue = nil
+		for _, obj := range level {
+			for _, k := range keys {
+				if got, ok := take(obj[k]); ok {
+					return got
+				}
+			}
+			for _, v := range obj {
+				if nested, ok := v.(map[string]any); ok {
+					queue = append(queue, nested)
+				}
+			}
 		}
 	}
-	if nested, ok := fields["data"].(map[string]any); ok {
-		return pickString(nested, keys...)
-	}
-	return ""
+	return zero
 }
 
 // pickKobo reads a naira amount and converts it to integer kobo. The provider
 // sends JSON numbers, so this rounds at the last step rather than carrying a
 // float any further than it has to.
 func pickKobo(fields map[string]any, keys ...string) money.Kobo {
-	for _, k := range keys {
-		switch v := fields[k].(type) {
+	return search(fields, func(v any) (money.Kobo, bool) {
+		switch t := v.(type) {
 		case float64:
-			return money.Kobo(int64(v*100 + 0.5))
+			return money.Kobo(int64(t*100 + 0.5)), true
 		case string:
-			if f, err := strconv.ParseFloat(strings.TrimSpace(v), 64); err == nil {
-				return money.Kobo(int64(f*100 + 0.5))
+			if f, err := strconv.ParseFloat(strings.TrimSpace(t), 64); err == nil {
+				return money.Kobo(int64(f*100 + 0.5)), true
 			}
 		case json.Number:
-			if f, err := v.Float64(); err == nil {
-				return money.Kobo(int64(f*100 + 0.5))
+			if f, err := t.Float64(); err == nil {
+				return money.Kobo(int64(f*100 + 0.5)), true
 			}
 		}
-	}
-	if nested, ok := fields["data"].(map[string]any); ok {
-		return pickKobo(nested, keys...)
-	}
-	return 0
+		return 0, false
+	}, keys)
 }
