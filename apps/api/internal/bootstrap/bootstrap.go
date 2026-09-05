@@ -98,6 +98,38 @@ const FloatCapital = money.Kobo(50000000) // ₦500,000
 // Provision creates any missing account and tops the float up to its target.
 // It is idempotent: running it against a live database changes nothing that
 // already exists, and never touches balances of accounts that are present.
+// ErrLiveDeployment means the database is in real use and seeding it would
+// fabricate money.
+var ErrLiveDeployment = errors.New(
+	"this database is in live use; seeding it would create money that is not at the bank")
+
+// CheckSafeToSeed refuses to seed a database that is carrying real value.
+//
+// Provisioning tops the float up to FloatCapital and hands the demo personas
+// opening balances. On a laptop that is harmless. On a deployment whose float
+// has been reconciled against an actual bank balance it is not: seeding a float
+// of 1,004.25 up to 500,000 mints 498,995.75 that exists in the books and
+// nowhere else, and the reconciliation that made the books trustworthy is the
+// first thing it destroys.
+//
+// Two signals say a database is live, and either is enough. A reconciliation
+// entry means somebody has tied the float to a real bank balance. A user with a
+// password means somebody signed up. Neither happens on a seeded machine.
+func CheckSafeToSeed(ctx context.Context, pool *pgxpool.Pool) error {
+	var reconciled, registered int
+	if err := pool.QueryRow(ctx, `
+		SELECT (SELECT count(*) FROM ledger_entries WHERE reason LIKE 'float.reconciled:%'),
+		       (SELECT count(*) FROM users WHERE password_hash IS NOT NULL)
+		`).Scan(&reconciled, &registered); err != nil {
+		return err
+	}
+	if reconciled > 0 || registered > 0 {
+		return fmt.Errorf("%w: %d reconciliation entries, %d registered accounts",
+			ErrLiveDeployment, reconciled, registered)
+	}
+	return nil
+}
+
 func Provision(ctx context.Context, pool *pgxpool.Pool) (map[string]uuid.UUID, error) {
 	tx, err := pool.Begin(ctx)
 	if err != nil {
